@@ -1,0 +1,73 @@
+name: Entrenar IA
+
+on:
+  schedule:
+    # Los días 1 a 4 de cada mes a las 0:17 UTC: reentrena con un mes más de historial. Con 7 días de
+    # antelación la descarga no cabe en la cuota diaria de Open-Meteo (10.000 llamadas): se reparte en
+    # 3 noches, cada una sigue donde lo dejó la anterior. Cuando ya está todo, solo reentrena (minutos).
+    - cron: "17 0 1-4 * *"
+  workflow_dispatch: # botón «Run workflow» para entrenarla a mano
+
+permissions:
+  contents: write # para guardar el modelo y su examen en el repositorio
+
+concurrency:
+  group: entrenar
+  cancel-in-progress: false
+
+jobs:
+  entrenar:
+    runs-on: ubuntu-latest
+    # Lo lento es descargar el historial: unas 3 noches yendo despacio para no pasar el límite de Open-Meteo.
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            scripts/requirements.txt
+            scripts/ml/requirements.txt
+
+      - run: pip install -r scripts/requirements.txt -r scripts/ml/requirements.txt
+
+      # Lo ya descargado este mes (una carpeta por ciudad) se guarda en la caché de GitHub:
+      # si la descarga se corta, la siguiente ejecución sigue donde lo dejó.
+      - name: Mes actual
+        id: mes
+        run: echo "mes=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - name: Recuperar lo ya descargado
+        uses: actions/cache/restore@v4
+        with:
+          path: scripts/ml/datos/ciudades7
+          key: ml-historial7-${{ steps.mes.outputs.mes }}-${{ github.run_id }}
+          restore-keys: ml-historial7-${{ steps.mes.outputs.mes }}-
+
+      - name: Descargar historial (previsiones pasadas + medidas reales)
+        env:
+          ML_BUDGET_MIN: "290" # parar a tiempo para guardar lo descargado
+        run: python scripts/ml/descargar_historial.py
+
+      - name: Guardar lo descargado
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: scripts/ml/datos/ciudades7
+          key: ml-historial7-${{ steps.mes.outputs.mes }}-${{ github.run_id }}
+
+      - name: Entrenar y examinar
+        if: hashFiles('scripts/ml/datos/DONE') != ''
+        run: python scripts/ml/entrenar.py
+
+      - name: Guardar el modelo nuevo
+        if: hashFiles('scripts/ml/datos/DONE') != ''
+        run: |
+          git config user.name "ia-bot"
+          git config user.email "ia-bot@users.noreply.github.com"
+          git add scripts/ml/modelo.joblib scripts/ml/metricas.json
+          git commit -m "IA reentrenada" || exit 0
+          git pull --rebase
+          git push

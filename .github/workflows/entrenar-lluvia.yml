@@ -1,0 +1,77 @@
+name: Entrenar IA lluvia
+
+on:
+  schedule:
+    # Los días 2 y 3 de cada mes (el 1 descarga la IA de temperatura y gasta el cupo diario de Open-Meteo).
+    # Si el día 2 no termina la descarga, el 3 sigue donde lo dejó y entrena.
+    - cron: "37 0 2,3 * *"
+  workflow_dispatch: # botón «Run workflow» para entrenarla a mano
+
+permissions:
+  contents: write # para guardar el modelo y su examen en el repositorio
+
+concurrency:
+  group: entrenar-lluvia
+  cancel-in-progress: false
+
+jobs:
+  entrenar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            scripts/requirements.txt
+            scripts/ml/requirements.txt
+
+      - run: pip install -r scripts/requirements.txt -r scripts/ml/requirements.txt
+
+      # Lo ya descargado este mes se guarda en la caché de GitHub: si se corta, la siguiente vez sigue.
+      - name: Mes actual
+        id: mes
+        run: echo "mes=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - name: Recuperar lo ya descargado
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            scripts/ml/datos/lluvia/prev
+            scripts/ml/datos/lluvia/obs
+            scripts/ml/datos/lluvia/estaciones.json
+          key: ml-lluvia-${{ steps.mes.outputs.mes }}-${{ github.run_id }}
+          restore-keys: ml-lluvia-${{ steps.mes.outputs.mes }}-
+
+      - name: Descargar historial de lluvia (modelos + AEMET)
+        env:
+          AEMET_API_KEY: ${{ secrets.AEMET_API_KEY }}
+          ML_BUDGET_MIN: "290"
+        run: python scripts/ml/descargar_lluvia.py
+
+      - name: Guardar lo descargado
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            scripts/ml/datos/lluvia/prev
+            scripts/ml/datos/lluvia/obs
+            scripts/ml/datos/lluvia/estaciones.json
+          key: ml-lluvia-${{ steps.mes.outputs.mes }}-${{ github.run_id }}
+
+      - name: Entrenar y examinar
+        if: hashFiles('scripts/ml/datos/lluvia/DONE') != ''
+        run: python scripts/ml/entrenar_lluvia.py
+
+      - name: Guardar el modelo nuevo
+        if: hashFiles('scripts/ml/datos/lluvia/DONE') != ''
+        run: |
+          git config user.name "ia-bot"
+          git config user.email "ia-bot@users.noreply.github.com"
+          git add scripts/ml/modelo_lluvia.joblib scripts/ml/metricas_lluvia.json
+          git commit -m "IA de lluvia reentrenada" || exit 0
+          git pull --rebase
+          git push
