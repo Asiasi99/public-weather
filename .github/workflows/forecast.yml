@@ -16,6 +16,9 @@ on:
         type: string
         default: ""
 
+permissions:
+  contents: read
+
 concurrency:
   group: forecast
   cancel-in-progress: false
@@ -76,3 +79,25 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: python scripts/ml/archivar.py
+
+  # GitHub se salta muchas ejecuciones programadas en repositorios con poca actividad.
+  # Por eso cada ejecución deja lanzada la siguiente: espera al próximo minuto de la lista y se relanza.
+  # El «cron» de arriba queda de reserva por si la cadena se corta. Si se juntan dos, «concurrency»
+  # deja como mucho una esperando y cancela las demás, así que nunca se multiplican.
+  siguiente:
+    needs: [fetch]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    permissions:
+      actions: write
+    steps:
+      - name: Esperar y lanzar la siguiente
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          now=$(date -u +%M); now=$((10#$now)); best=99
+          for m in 41; do d=$(( (m - now + 60) % 60 )); [ $d -lt 2 ] && d=$((d+60)); [ $d -lt $best ] && best=$d; done
+          echo "Siguiente en $best min"
+          sleep $((best*60 - $(date -u +%S | sed 's/^0//')))
+          gh api -X POST repos/${{ github.repository }}/actions/workflows/forecast.yml/dispatches -f ref=main
