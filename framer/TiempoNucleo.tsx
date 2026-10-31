@@ -8,7 +8,6 @@
  */
 import { RenderTarget } from "framer"
 import { useEffect, useMemo, useRef, useState } from "react"
-import type { PointerEvent } from "react"
 
 export const BASE = "https://tmnnidlzmwxgpxufqkgm.supabase.co/storage/v1/object/public/weather"
 const HOUR = 3600_000
@@ -1075,7 +1074,7 @@ export function useTiempo(props: Partial<Props>) {
 
     const css = `
         @keyframes ${uid}-nudge { 0%,100% { transform: translateY(1.5px); opacity: .55 } 50% { transform: translateY(-1.5px); opacity: 1 } }
-        @keyframes ${uid}-fall { from { background-position: 0 0 } to { background-position: -2px 16px } }
+        @keyframes ${uid}-fall { from { background-position: 0 0 } to { background-position: 0 16px } }
         @keyframes ${uid}-drift { 0%,100% { transform: translateY(-3px) } 50% { transform: translateY(3px) } }
         @keyframes ${uid}-pulse { 0% { transform: scale(1); opacity: .55 } 100% { transform: scale(2.6); opacity: 0 } }
         @keyframes ${uid}-in { from { opacity: 0; transform: translateY(14px); filter: blur(8px) } to { opacity: 1; transform: none; filter: blur(0) } }
@@ -1273,7 +1272,6 @@ export function SeccionDatos({ v }: { v: Vista }) {
 export function SeccionGrafico({ v }: { v: Vista }) {
     const { p, CG, CLOUD_W, CW, G, H, PAD_B, PAD_T, RW, RX, X0, X1, aiEnd, aiOn, alerts, arrows, cloudNow, cols, css, cx0, dayKey, dayLight, dayStarts, dec, fLine, fPts, feels, feelsLevel, feelsNow, fmtDay, fmtHour, fmtRange, fmtWd, fr, fresh, gradStops, groups, h0, hasLayers, hours, lab, labC, lat, lon, lowCloud, maeIa, maeMed, marks, night, now, nowCol, phrase, pushRun, rainDays, rainProbOf, rainRuns, rec, sit, sky, stateLabel, sunMarks, suns, tArea, tLine, tMax, tMin, tPts, tStops, tcol, today, todayMax, todayMin, tx, tz, wArea, wLine, wPts, wScale, windHours, windPeaks, wx, y, yEnd, uid, W, dark, toggleTheme, bgColor, inkColor, softColor, cloudColor, gridColor, doc } = v
     const { cityId, baseUrl, days, hourHeight, showHeader, showWind, showRain, showClouds, showAI, showSpread, showScore, tempCold, tempMild, tempWarm, tempHot, windColor, rainColor, lineWidth, blur, grain, texture, sphereBlur, showFeels, phraseStyle, customPhrase, showAlerts, theme, windMax, radius, animate } = p
-    const [hover, setHover] = useState<number | null>(null)
     const [verModelos, setVerModelos] = useState(false)
     // Cada modelo por separado: una línea gris fina (tramos sin hueco, un punto cada 2 h)
     const NOMBRE: Record<string, string> = { ifs: "ECMWF", aifs: "ECMWF IA", gfs: "GFS", "icon-eu": "ICON", arpege: "ARPEGE", arome: "AROME", ukmo: "UKMO", gem: "GEM" }
@@ -1300,17 +1298,11 @@ export function SeccionGrafico({ v }: { v: Vista }) {
             return { id: m.id ?? `m${i}`, name: NOMBRE[m.id ?? ""] ?? (m.id ?? `Modelo ${i + 1}`).toUpperCase(), d: segs.map((s) => curve(s)).join(""), end: last as [number, number] | null }
         })
     }, [verModelos, doc, hours, W])
-    const hv = hover != null ? hours.reduce((a, h) => (Math.abs(h.t - hover) < Math.abs(a.t - hover) ? h : a)) : null
     return (
         <>
             <div
                 className={`${uid}-strip`}
                 style={{ position: "relative", height: H, touchAction: "pan-y" }}
-                onPointerMove={(e: PointerEvent<HTMLDivElement>) => {
-                    const r = e.currentTarget.getBoundingClientRect()
-                    setHover(hours[0].t + ((e.clientY - r.top - PAD_T) / hourHeight) * HOUR)
-                }}
-                onPointerLeave={() => setHover(null)}
             >
                 <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ position: "absolute", inset: 0, overflow: "visible" }}>
                     <defs>
@@ -1589,31 +1581,6 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                     </span>
                 ))}
 
-                {/* lo que señalas */}
-                {hv && (
-                    <>
-                        <span style={{ position: "absolute", left: 0, right: 0, top: y(hv.t), height: 1, background: rgba(inkColor, 0.5), pointerEvents: "none" }} />
-                        <span
-                            style={{
-                                position: "absolute",
-                                top: y(hv.t) - 22,
-                                right: CLOUD_W + 4,
-                                padding: "2px 7px",
-                                borderRadius: 8,
-                                background: rgba(bgColor, 0.92),
-                                boxShadow: `0 0 0 1px ${rgba(inkColor, 0.12)}`,
-                                fontFamily: MONO,
-                                fontSize: 10,
-                                color: inkColor,
-                                whiteSpace: "nowrap",
-                                pointerEvents: "none",
-                            }}
-                        >
-                            {fmtHour.format(new Date(hv.t))} · {Math.round(hv.temp)}° ({t("se nota", "feels")} {Math.round(feelsOf(hv.temp, hv.wind, hv.hum))}°) · {hv.wind != null ? `${Math.round(hv.wind)} km/h` : ""}
-                            {hv.rain >= 0.1 ? ` · ${dec1(hv.rain)} mm` : ""}
-                        </span>
-                    </>
-                )}
             </div>
         </>
     )
