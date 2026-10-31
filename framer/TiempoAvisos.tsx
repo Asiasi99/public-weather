@@ -21,6 +21,7 @@ export default function TiempoAvisos(props: Partial<Props>) {
 
 addPropertyControls(TiempoAvisos, {
     cityId: { type: ControlType.String, title: "Ciudad", defaultValue: "global", placeholder: "global o madrid, sevilla…" },
+    fondo: { type: ControlType.Enum, title: "Fondo", options: ["color", "cristal", "transparente"], optionTitles: ["Color", "Cristal", "Nada"], defaultValue: "color", displaySegmentedControl: true },
     days: { type: ControlType.Number, title: "Días", min: 1, max: 7, step: 1, defaultValue: 7 },
     idioma: { type: ControlType.Enum, title: "Idioma", options: ["auto", "es", "en"], optionTitles: ["Auto", "Español", "English"], defaultValue: "auto", displaySegmentedControl: true },
     theme: { type: ControlType.Enum, title: "Tema", options: ["auto", "claro", "oscuro"], optionTitles: ["Auto", "Claro", "Oscuro"], defaultValue: "auto", displaySegmentedControl: true },

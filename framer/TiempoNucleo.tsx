@@ -207,45 +207,53 @@ function dayCorr(list: { corr?: N }[]): number | null {
     return v.length >= 3 ? v.reduce((s, x) => s + x, 0) / v.length : null
 }
 /**
- * Por qué corrige la IA ese día (las 1-2 razones que más pesan), mirando cuándo corrige (noche o tarde)
- * y cómo está el cielo en esas horas. Es una explicación probable: la IA no «dice» sus motivos, pero
- * aprende de los errores de los modelos aquí, y esos errores casi siempre vienen de estas situaciones.
+ * Qué corrige la IA ese día y por qué, por tramos: madrugada (antes de salir el sol), día y noche
+ * (después de ponerse). Para cada tramo: sus horas, cuánto corrige de media y la razón probable.
+ * Es una explicación probable: la IA no «dice» sus motivos, pero aprende de los errores de los
+ * modelos aquí, y esos errores casi siempre vienen de estas situaciones (cielo, viento, lluvia…).
  */
-function razonesIA(list: Hour[], esNoche: (t: number) => boolean, fmt: (v: number) => string): string[] {
+type Tramo = { nombre: string; desde: number; hasta: number; c: number; razon: string }
+function explicaIA(list: Hour[], esNoche: (t: number) => boolean, fmt: (v: number) => string): { tramos: Tramo[]; acuerdo: string | null } {
     const m = (xs: N[]) => {
         const v = xs.filter((x): x is number => x != null)
         return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null
     }
     const nube = (h: Hour) => h.cloud ?? (h.lo != null || h.mid != null || h.hi != null ? Math.max(h.lo ?? 0, h.mid ?? 0, h.hi ?? 0) : null)
-    const noche = list.filter((h) => esNoche(h.t)),
-        dia = list.filter((h) => !esNoche(h.t))
-    const cN = m(noche.map((h) => h.corr)),
-        cD = m(dia.map((h) => h.corr))
-    const nubN = m(noche.map(nube)) ?? 50,
-        nubD = m(dia.map(nube)) ?? 50
-    const vN = m(noche.map((h) => h.wind)) ?? 0
-    const llueve = dia.some((h) => h.rain >= 0.3)
+    // tramos seguidos de noche / día
+    const runs: Hour[][] = []
+    list.forEach((h, i) => {
+        if (i && esNoche(h.t) === esNoche(list[i - 1].t)) runs[runs.length - 1].push(h)
+        else runs.push([h])
+    })
+    const tramos: Tramo[] = []
+    runs.forEach((r, i) => {
+        const c = m(r.map((h) => h.corr))
+        if (c == null || r.length < 2) return
+        const noche = esNoche(r[0].t)
+        const nombre = !noche ? t("Día", "Daytime") : i === 0 ? t("Madrugada", "Early hours") : t("Noche", "Night")
+        const nub = m(r.map(nube)) ?? 50,
+            vie = m(r.map((h) => h.wind)) ?? 0,
+            llueve = r.some((h) => h.rain >= 0.3)
+        let razon: string
+        if (Math.abs(c) < 0.3) razon = t("Los modelos ya cuadran con lo que se mide aquí: apenas toca.", "The models already match what's measured here.")
+        else if (noche) {
+            if (c < 0 && nub < 35 && vie < 12) razon = t("Despejado y sin viento: el suelo pierde calor y enfría más de lo que dan los modelos.", "Clear and calm: the ground loses heat and it gets colder than the models say.")
+            else if (c < 0) razon = t("Aquí a esas horas suele hacer más frío de lo que dan los modelos.", "It's usually colder here at those hours than the models say.")
+            else if (nub >= 60) razon = t("Las nubes hacen de manta y no dejan enfriar tanto.", "Clouds act as a blanket and stop it cooling as much.")
+            else if (vie >= 15) razon = t("El viento mezcla el aire y no deja que enfríe.", "Wind mixes the air and stops it cooling.")
+            else razon = t("Aquí a esas horas suele hacer menos frío de lo que dan los modelos.", "It's usually milder here at those hours than the models say.")
+        } else {
+            if (c < 0 && llueve) razon = t("La lluvia refresca y no sube tanto.", "Rain cools things down, so it doesn't warm as much.")
+            else if (c < 0 && nub >= 60) razon = t("Muchas nubes: frenan el sol y no sube tanto.", "Thick cloud blocks the sun, so it doesn't warm as much.")
+            else if (c < 0) razon = t("Los modelos suelen pasarse de calor aquí de día.", "The models usually run too warm here during the day.")
+            else if (nub < 30) razon = t("Sol pleno: aquí calienta más de lo que dan los modelos.", "Full sun: it gets warmer here than the models say.")
+            else razon = t("De día aquí suele hacer más de lo que dan los modelos.", "Days here tend to be warmer than the models say.")
+        }
+        tramos.push({ nombre, desde: r[0].t, hasta: r[r.length - 1].t + HOUR, c, razon })
+    })
     const sd = m(list.map((h) => h.sd))
-    const out: [number, string][] = []
-    if (cN != null && Math.abs(cN) >= 0.4) {
-        const x = fmt(cN)
-        if (cN < 0 && nubN < 35 && vN < 12) out.push([Math.abs(cN), t(`Noche despejada y sin viento: el suelo se enfría más de lo que dan los modelos (${x}).`, `Clear, calm night: the ground cools more than the models say (${x}).`)])
-        else if (cN < 0) out.push([Math.abs(cN), t(`Aquí las noches suelen ser más frías de lo que dan los modelos (${x}).`, `Nights here tend to be colder than the models say (${x}).`)])
-        else if (nubN >= 60) out.push([cN, t(`Nubes de noche: hacen de manta y no dejan enfriar tanto (${x}).`, `Clouds at night act as a blanket and stop it cooling as much (${x}).`)])
-        else if (vN >= 15) out.push([cN, t(`Viento de noche: mezcla el aire y no deja que enfríe (${x}).`, `Wind at night mixes the air and stops it cooling (${x}).`)])
-        else out.push([cN, t(`Aquí las noches suelen ser menos frías de lo que dan los modelos (${x}).`, `Nights here tend to be milder than the models say (${x}).`)])
-    }
-    if (cD != null && Math.abs(cD) >= 0.4) {
-        const x = fmt(cD)
-        if (cD < 0 && llueve) out.push([Math.abs(cD), t(`Lluvia: refresca y la tarde no sube tanto (${x}).`, `Rain cools things down, so the afternoon stays fresher (${x}).`)])
-        else if (cD < 0 && nubD >= 60) out.push([Math.abs(cD), t(`Muchas nubes: frenan el sol y la tarde no sube tanto (${x}).`, `Thick cloud blocks the sun, so the afternoon stays cooler (${x}).`)])
-        else if (cD < 0) out.push([Math.abs(cD), t(`Por la tarde los modelos suelen pasarse de calor aquí (${x}).`, `The models usually run too warm here in the afternoon (${x}).`)])
-        else if (nubD < 30) out.push([cD, t(`Sol pleno: aquí la tarde suele calentar más de lo que dan los modelos (${x}).`, `Full sun: afternoons here get warmer than the models say (${x}).`)])
-        else out.push([cD, t(`Por la tarde suele hacer más de lo que dan los modelos (${x}).`, `Afternoons tend to be warmer than the models say (${x}).`)])
-    }
-    if (sd != null && sd >= 1.5) out.push([sd * 0.4, t(`Los modelos no se ponen de acuerdo (±${fmt(sd).replace(/^[+−]/, "")}): se fía de los que mejor aciertan aquí.`, `The models disagree (±${fmt(sd).replace(/^[+−]/, "")}): it trusts the ones that do best here.`)])
-    if (!out.length) return [t("Los modelos ya cuadran con lo que se mide aquí: apenas corrige.", "The models already match what's measured here: barely any correction.")]
-    return out.sort((a, b) => b[0] - a[0]).slice(0, 2).map((r) => r[1])
+    const acuerdo = sd != null && sd >= 1.5 ? t(`Los modelos no se ponen de acuerdo (±${fmt(sd).replace(/^[+−]/, "")}): la IA se fía más de los que mejor aciertan aquí.`, `The models disagree (±${fmt(sd).replace(/^[+−]/, "")}): the AI trusts the ones that do best here.`) : null
+    return { tramos, acuerdo }
 }
 const signo = (v: number) => (Math.abs(v) < 0.05 ? dec1(0) : `${v > 0 ? "+" : "−"}${dec1(Math.abs(v))}`)
 
@@ -606,6 +614,8 @@ export type Props = {
     sphereBlur: number
     /** dónde va el cielo animado: dentro de la tarjeta, fuera (lo pinta la pieza TiempoFondo detrás de la página) o ninguno */
     cielo: "tarjeta" | "fuera" | "no"
+    /** fondo de la tarjeta: su color, cristal (translúcido con desenfoque, deja ver el cielo) o nada */
+    fondo: "color" | "cristal" | "transparente"
     showFeels: boolean
     phraseStyle: Estilo
     customPhrase: string
@@ -647,6 +657,7 @@ export const DEFAULTS: Props = {
     texture: "puntos" as const,
     sphereBlur: 4,
     cielo: "tarjeta",
+    fondo: "color",
     showFeels: true,
     phraseStyle: "practico" as Estilo,
     customPhrase: "",
@@ -1389,7 +1400,14 @@ export type Vista = Extract<ReturnType<typeof useTiempo>, { ready: true }>
 
 /** Caja de cada pieza: fondo del tema, «Cargando…» o «No hay datos» */
 export function Caja({ v, radius, children, style }: { v: ReturnType<typeof useTiempo>; radius?: number; children?: any; style?: any }) {
-    const box = { ...v.box, borderRadius: radius ?? v.box.borderRadius }
+    const fondo = (v.p as Props | undefined)?.fondo ?? "color"
+    const vidrio =
+        fondo === "cristal"
+            ? { background: rgba(v.bgColor, v.dark ? 0.42 : 0.5), backdropFilter: "blur(16px) saturate(1.3)", WebkitBackdropFilter: "blur(16px) saturate(1.3)", boxShadow: `inset 0 0 0 1px ${rgba(v.dark ? "#ffffff" : "#ffffff", v.dark ? 0.08 : 0.55)}, 0 8px 30px ${rgba("#000000", v.dark ? 0.25 : 0.05)}` }
+            : fondo === "transparente"
+              ? { background: "transparent" }
+              : {}
+    const box = { ...v.box, borderRadius: radius ?? v.box.borderRadius, ...vidrio }
     if (!v.ready)
         return (
             <div ref={v.ref} style={{ ...box, padding: 20, fontSize: 13, color: v.softColor }}>
@@ -1561,6 +1579,7 @@ export function SeccionGrafico({ v }: { v: Vista }) {
     const { p, CG, CLOUD_W, CW, G, H, PAD_B, PAD_T, RW, RX, X0, X1, aiEnd, aiOn, alerts, arrows, cloudNow, cols, css, cx0, dayKey, dayLight, dayStarts, dec, fLine, fPts, feels, feelsLevel, feelsNow, fmtDay, fmtHour, fmtRange, fmtWd, fr, fresh, gradStops, groups, h0, hasLayers, hours, lab, labC, lat, lon, lowCloud, maeIa, maeMed, marks, night, now, nowCol, phrase, pushRun, rainDays, rainProbOf, rainRuns, rec, sit, sky, stateLabel, sunMarks, suns, tArea, tLine, tMax, tMin, tPts, tStops, tcol, today, todayMax, todayMin, tx, tz, wArea, wLine, wPts, wScale, windHours, windPeaks, wx, y, yEnd, uid, W, dark, toggleTheme, bgColor, inkColor, softColor, cloudColor, gridColor, doc } = v
     const { cityId, baseUrl, days, hourHeight, showHeader, showWind, showRain, showClouds, showAI, showSpread, showScore, tempCold, tempMild, tempWarm, tempHot, windColor, rainColor, lineWidth, blur, grain, texture, sphereBlur, showFeels, phraseStyle, customPhrase, showAlerts, theme, windMax, radius, animate } = p
     const [verModelos, setVerModelos] = useState(false)
+    const [iaDia, setIaDia] = useState<string | null>(null) // el día cuyo «por qué» está abierto
     // Cada modelo por separado: una línea gris fina (tramos sin hueco, un punto cada 2 h)
     const NOMBRE: Record<string, string> = { ifs: "ECMWF", aifs: "ECMWF IA", gfs: "GFS", "icon-eu": "ICON", arpege: "ARPEGE", arome: "AROME", ukmo: "UKMO", gem: "GEM" }
     const modelLines = useMemo(() => {
@@ -1773,33 +1792,55 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                     </span>
                 ))}
 
-                {/* corrección de la IA de cada día, a la derecha de su raya */}
+                {/* la IA de cada día: un botón pequeño «✦ por qué» que abre lo que corrige, por tramos de horas */}
                 {showSpread &&
                     showAI &&
-                    groups.map((g, k) =>
-                        dayCorr(g.list) == null ? null : (
-                            <span key={`c${g.key}`} title={t("Corrección de la IA ese día: cuánto sube (+) o baja (−) lo que decían los modelos", "AI correction that day: how much it raises (+) or lowers (−) the models")} style={{ position: "absolute", right: CLOUD_W + 4, top: k === 0 ? 4 : y(g.start) + 4, padding: "1px 5px", borderRadius: 999, border: `1px solid ${rgba(tempMild, 0.45)}`, background: rgba(bgColor, 0.85), fontFamily: MONO, fontSize: 8.5, lineHeight: 1.3, color: inkColor, whiteSpace: "nowrap", pointerEvents: "none" }}>
-                                <span style={{ color: tempMild }}>✦</span> {signo(uTd(dayCorr(g.list)!))}°
-                            </span>
+                    groups.map((g, k) => {
+                        const media = dayCorr(g.list)
+                        if (media == null) return null
+                        const top = k === 0 ? 4 : y(g.start) + 4
+                        const open = iaDia === g.key
+                        const fd = (x: number) => `${signo(uTd(x))}°`
+                        const ex = open ? explicaIA(g.list, (tt) => dayLight(tt) < 0.5, fd) : null
+                        const hh = (tt: number) => new Intl.DateTimeFormat(LOC(), { hour: "2-digit", hourCycle: "h23", timeZone: tz }).format(new Date(tt))
+                        return (
+                            <div key={`ia${g.key}`} style={{ position: "absolute", right: CLOUD_W + 4, top, zIndex: open ? 30 : 4, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setIaDia(open ? null : g.key)}
+                                    aria-expanded={open}
+                                    style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 7px 2px 6px", borderRadius: 999, border: `1px solid ${rgba(tempMild, open ? 0.8 : 0.45)}`, background: open ? rgba(tempMild, 0.14) : rgba(bgColor, 0.85), fontFamily: MONO, fontSize: 8.5, lineHeight: 1.3, color: inkColor, cursor: "pointer", whiteSpace: "nowrap" }}
+                                >
+                                    <span style={{ color: tempMild }}>✦</span> {t("por qué", "why")}
+                                    <svg width="7" height="7" viewBox="0 0 8 8" style={{ transition: "transform .25s", transform: open ? "rotate(180deg)" : "none" }}>
+                                        <path d="M1.5 3l2.5 2.5L6.5 3" stroke={softColor} strokeWidth="1.3" fill="none" strokeLinecap="round" />
+                                    </svg>
+                                </button>
+                                {open && ex && (
+                                    <div className={`${uid}-in`} style={{ marginTop: 6, width: Math.min(236, W - 110), padding: "10px 12px", borderRadius: 14, background: bgColor, border: `1px solid ${rgba(inkColor, 0.1)}`, boxShadow: "0 12px 34px rgba(0,0,0,.14)", fontFamily: SANS, color: inkColor, textAlign: "left" }}>
+                                        <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: softColor, marginBottom: 6 }}>{t("Lo que corrige la IA", "What the AI corrects")}</div>
+                                        {ex.tramos.map((r) => (
+                                            <div key={r.desde} style={{ padding: "6px 0", borderTop: `1px solid ${rgba(inkColor, 0.07)}` }}>
+                                                <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                                                    <b style={{ fontWeight: 600, fontSize: 12 }}>{r.nombre}</b>
+                                                    <span style={{ fontFamily: MONO, fontSize: 9.5, color: softColor }}>
+                                                        {hh(r.desde)}–{hh(r.hasta)} h
+                                                    </span>
+                                                    <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 11, fontWeight: 600, color: Math.abs(r.c) < 0.3 ? softColor : r.c < 0 ? tempCold : mix(tempWarm, tempHot, 0.5) }}>{fd(r.c)}</span>
+                                                </div>
+                                                <div style={{ fontSize: 11, lineHeight: 1.35, color: softColor, marginTop: 2 }}>{r.razon}</div>
+                                            </div>
+                                        ))}
+                                        {ex.acuerdo && <div style={{ fontSize: 11, lineHeight: 1.35, color: softColor, padding: "6px 0", borderTop: `1px solid ${rgba(inkColor, 0.07)}` }}>{ex.acuerdo}</div>}
+                                        <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 9.5, color: softColor, paddingTop: 6, borderTop: `1px solid ${rgba(inkColor, 0.07)}` }}>
+                                            <span>{t("Media de todo el día", "Whole-day average")}</span>
+                                            <span style={{ color: inkColor }}>{fd(media)}</span>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                         )
-                    )}
-                {/* por qué corrige la IA cada día, en letra pequeña debajo de su pastilla */}
-                {showSpread &&
-                    showAI &&
-                    groups.map((g, k) =>
-                        dayCorr(g.list) == null ? null : (
-                            (() => {
-                                // se ve la razón principal; pasando el ratón, todas
-                                const rz = razonesIA(g.list, (tt) => dayLight(tt) < 0.5, (x) => `${signo(uTd(x))}°`)
-                                return (
-                                    <span key={`r${g.key}`} title={rz.join("\n")} style={{ position: "absolute", right: CLOUD_W + 4, top: (k === 0 ? 4 : y(g.start) + 4) + 18, width: Math.min(150, W * 0.42), textAlign: "right", fontFamily: SANS, fontSize: 9.5, lineHeight: 1.3, color: softColor, textShadow: `0 0 4px ${bgColor}, 0 0 2px ${bgColor}, 0 0 1px ${bgColor}`, textWrap: "pretty" as any, cursor: rz.length > 1 ? "help" : "default" }}>
-                                        {rz[0]}
-                                        {rz.length > 1 && <span style={{ color: tempMild }}> +1</span>}
-                                    </span>
-                                )
-                            })()
-                        )
-                    )}
+                    })}
 
                 {/* la velocidad más alta de cada día, junto a la raya del viento */}
                 {showWind &&

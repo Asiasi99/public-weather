@@ -21,6 +21,7 @@ export default function TiempoGrafico(props: Partial<Props>) {
 
 addPropertyControls(TiempoGrafico, {
     cityId: { type: ControlType.String, title: "Ciudad", defaultValue: "global", placeholder: "global o madrid, sevilla…" },
+    fondo: { type: ControlType.Enum, title: "Fondo", options: ["color", "cristal", "transparente"], optionTitles: ["Color", "Cristal", "Nada"], defaultValue: "color", displaySegmentedControl: true },
     days: { type: ControlType.Number, title: "Días", min: 1, max: 7, step: 1, defaultValue: 7 },
     hourHeight: { type: ControlType.Number, title: "Alto por hora", min: 4, max: 24, step: 1, unit: " px", defaultValue: 9 },
     showWind: { type: ControlType.Boolean, title: "Viento", defaultValue: true },

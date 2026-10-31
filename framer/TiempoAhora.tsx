@@ -21,6 +21,7 @@ export default function TiempoAhora(props: Partial<Props>) {
 
 addPropertyControls(TiempoAhora, {
     cityId: { type: ControlType.String, title: "Ciudad", defaultValue: "global", placeholder: "global o madrid, sevilla…" },
+    fondo: { type: ControlType.Enum, title: "Fondo", options: ["color", "cristal", "transparente"], optionTitles: ["Color", "Cristal", "Nada"], defaultValue: "color", displaySegmentedControl: true },
     cielo: { type: ControlType.Enum, title: "Cielo", options: ["tarjeta", "fuera", "no"], optionTitles: ["Tarjeta", "Fuera", "No"], defaultValue: "tarjeta", displaySegmentedControl: true },
     sphereBlur: { type: ControlType.Number, title: "Difuminado nubes", hidden: (p: any) => p.cielo !== "tarjeta", min: 0, max: 12, step: 0.5, defaultValue: 4 },
     showPhrase: { type: ControlType.Boolean, title: "Frase", defaultValue: false },
