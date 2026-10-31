@@ -278,6 +278,19 @@ export function scale(stops: [number, string][], v: number) {
     return stops[stops.length - 1][1]
 }
 
+/** Colores del viento según la velocidad (km/h): calma azul-verde → amarillo → naranja → magenta → violeta */
+export const WIND_STOPS: [number, string][] = [
+    [0, "#6fc8ff"],
+    [8, "#3fd9b4"],
+    [18, "#b5e04a"],
+    [28, "#ffc53a"],
+    [40, "#ff7a3a"],
+    [55, "#ff3f7f"],
+    [75, "#c03cff"],
+    [100, "#7a4cff"],
+]
+export const wcol = (kmh: number) => scale(WIND_STOPS, kmh)
+
 // Curva suave que pasa por todos los puntos (Catmull-Rom), vale para curvas verticales
 function curve(p: [number, number][]): string {
     if (!p.length) return ""
@@ -604,151 +617,227 @@ let uidN = 0
 // ---------------- El cielo de partículas ----------------
 type Sky = "sol" | "nubes" | "lluvia" | "noche"
 /**
- * El cielo: un sistema de partículas que dibuja el tiempo de ahora detrás de la temperatura.
+ * El cielo: el fondo vivo de la tarjeta, de borde a borde. Dibuja el tiempo de ahora con partículas.
  *
- * Como mirar por la ventana: el viento son hilos finos que corren en la dirección real (y más rápido
- * cuanto más sopla), las nubes son manchas suaves que pasan empujadas por ese viento (más y más grises
- * cuanto más nublado), la lluvia cae inclinada por el viento, de noche hay estrellas y con sol un
- * resplandor. El color de fondo es el de la temperatura: frío azul, templado verde, calor naranja/rojo.
+ * Como mirar por una ventana grande:
+ *   1. aurora: 4 manchas grandes de luz con los colores de la temperatura que se mueven despacio
+ *      (frío → azules y violetas, templado → verdes, calor → naranjas y rojos);
+ *   2. sol (resplandor que respira) o estrellas que parpadean;
+ *   3. nubes en dos capas (lejos y cerca, como un paralaje), tantas como nubosidad, empujadas por el viento;
+ *   4. viento: cientos de partículas con estela que siguen la dirección real del viento y hacen remolinos
+ *      suaves; con rachas aceleran; si pasas el cursor se apartan;
+ *   5. lluvia (o nieve si hace ≤1°) inclinada por el viento, y chispas cálidas que suben con mucho calor.
  */
 function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur, uid }: { color: string; sky: Sky; cloud: number; wind: number; dir: number | null; temp: number; dark: boolean; ink: string; nubesBlur: number; uid: string }) {
-    const ref = useRef<HTMLCanvasElement>(null)
+    const ref = useRef<HTMLDivElement>(null)
     const cfg = useRef({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur })
     cfg.current = { color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur }
     useEffect(() => {
-        const cv = ref.current
-        if (!cv) return
-        const ctx = cv.getContext("2d")
-        if (!ctx) return
+        const box = ref.current
+        if (!box) return
+        const fondo = document.createElement("canvas"), estela = document.createElement("canvas")
+        for (const cv of [fondo, estela]) {
+            cv.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none"
+            box.appendChild(cv)
+        }
+        const g = fondo.getContext("2d"), e = estela.getContext("2d")
+        if (!g || !e) return
         const quieto = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches
-        let W = 0, H = 0, dpr = 1
+        let W = 1, H = 1, dpr = 1
         const tam = () => {
-            const r = cv.getBoundingClientRect()
-            dpr = Math.min(2, (typeof devicePixelRatio !== "undefined" && devicePixelRatio) || 1)
+            const r = box.getBoundingClientRect()
             W = Math.max(1, r.width); H = Math.max(1, r.height)
-            cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr)
+            dpr = Math.min(W * H > 600000 ? 1 : 2, (typeof devicePixelRatio !== "undefined" && devicePixelRatio) || 1)
+            for (const cv of [fondo, estela]) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr) }
         }
         tam()
         const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(tam) : null
-        ro?.observe(cv)
+        ro?.observe(box)
+        // el cursor aparta las partículas
+        let px = -9999, py = -9999
+        const mover = (ev: PointerEvent) => { const r = box.getBoundingClientRect(); px = ev.clientX - r.left; py = ev.clientY - r.top }
+        const salir = () => { px = py = -9999 }
+        window.addEventListener("pointermove", mover, { passive: true })
+        document.addEventListener("pointerleave", salir)
+        // solo se anima si se ve
+        let visible = true
+        const io = typeof IntersectionObserver !== "undefined" ? new IntersectionObserver(([en]) => { visible = en.isIntersecting; if (visible && !raf) raf = requestAnimationFrame(frame) }) : null
+        io?.observe(box)
+
         const rnd = Math.random
-        // hilos de viento, nubes, gotas, estrellas y chispas de calor
-        const hilos = Array.from({ length: 70 }, () => ({ x: rnd(), y: rnd(), v: 0.6 + rnd() * 0.8, l: 0.5 + rnd(), a: rnd(), w: rnd() * Math.PI * 2 }))
-        const nubes = Array.from({ length: 9 }, (_, i) => ({ x: rnd(), y: 0.05 + rnd() * 0.55, r: 0.16 + rnd() * 0.18, v: 0.5 + rnd() * 0.7, k: i }))
-        const gotas = Array.from({ length: 110 }, () => ({ x: rnd(), y: rnd(), v: 0.8 + rnd() * 0.6, l: 0.6 + rnd() * 0.6 }))
-        const estrellas = Array.from({ length: 40 }, () => ({ x: rnd(), y: rnd() * 0.8, s: 0.6 + rnd() * 1.2, f: rnd() * 6 }))
-        const chispas = Array.from({ length: 34 }, () => ({ x: rnd(), y: rnd(), v: 0.3 + rnd() * 0.7, s: 1 + rnd() * 2.2, f: rnd() * 6 }))
-        const col = (c: string, a: number) => { const [r, g, b] = hexRgb(c); return `rgba(${r},${g},${b},${a})` }
-        let t0 = performance.now(), raf = 0, tt = 0
+        const rgb = (c: string) => hexRgb(c)
+        const col = (c: string, a: number) => { const [r, gg, b] = rgb(c); return `rgba(${r},${gg},${b},${Math.max(0, Math.min(1, a))})` }
+        const MAXP = 360
+        const parts = Array.from({ length: MAXP }, () => ({ x: rnd(), y: rnd(), v: 0.55 + rnd() * 0.9, vida: rnd(), s: 0.6 + rnd() * 1.1 }))
+        const nubes = Array.from({ length: 12 }, (_, i) => ({ x: rnd() * 1.6 - 0.3, y: rnd() * 0.75, r: 0.14 + rnd() * 0.2, capa: i % 2, f: rnd() * 6 }))
+        const gotas = Array.from({ length: 160 }, () => ({ x: rnd() * 1.4 - 0.2, y: rnd(), v: 0.75 + rnd() * 0.6, l: 0.5 + rnd() * 0.8 }))
+        const estrellas = Array.from({ length: 60 }, () => ({ x: rnd(), y: rnd() * 0.85, s: 0.4 + rnd() * 1.1, f: rnd() * 6 }))
+        const chispas = Array.from({ length: 40 }, () => ({ x: rnd(), y: rnd(), v: 0.3 + rnd() * 0.7, s: 1 + rnd() * 2.4, f: rnd() * 6 }))
+        // paleta de la aurora según la temperatura
+        const paleta = (c: typeof cfg.current) => {
+            const T = c.temp
+            const extra = T >= 28 ? ["#ff4d2e", "#ffb02e"] : T >= 20 ? ["#ff9a3d", "#ffd36b"] : T >= 12 ? ["#4fd1a5", "#7cc7ff"] : T >= 4 ? ["#5aa8ff", "#8b7bff"] : ["#7fb6ff", "#b59cff"]
+            const noche = c.sky === "noche" ? "#3b3fa8" : c.sky === "lluvia" ? "#4a6fb5" : mix(c.color, "#ffffff", 0.3)
+            return [c.color, extra[0], extra[1], noche]
+        }
+        let t0 = performance.now(), raf = 0, tt = rnd() * 100
         const frame = (now: number) => {
-            const dt = Math.min(0.05, (now - t0) / 1000); t0 = now; tt += dt
+            raf = 0
+            const dt = Math.min(0.05, Math.max(0.001, (now - t0) / 1000)); t0 = now; tt += dt
             const c = cfg.current
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-            ctx.clearRect(0, 0, W, H)
-            // dirección hacia donde va el viento (el dato dice de dónde viene)
             const d = ((c.dir ?? 270) * Math.PI) / 180
-            const ux = -Math.sin(d), uy = Math.cos(d)
-            const fuerza = Math.min(1, c.wind / 50) // 0 calma … 1 temporal
-            const vel = 18 + fuerza * 160 // px/s
-            // 1. el color de la temperatura: un resplandor grande que respira a la derecha
-            const resp = 1 + 0.04 * Math.sin(tt * 0.6)
-            const g = ctx.createRadialGradient(W * 0.8, H * 0.25, 0, W * 0.8, H * 0.25, Math.max(W, H) * 0.75 * resp)
-            const calor = Math.max(0, Math.min(1, (c.temp - 22) / 14))
-            g.addColorStop(0, col(c.color, c.dark ? 0.55 : 0.5))
-            g.addColorStop(0.45, col(calor > 0 ? mix(c.color, "#ff3d2e", calor * 0.5) : c.color, c.dark ? 0.2 : 0.18))
-            g.addColorStop(1, col(c.color, 0))
-            ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+            const ux = -Math.sin(d), uy = Math.cos(d) // hacia dónde va el viento
+            const fuerza = Math.min(1, c.wind / 45)
+            const racha = 1 + 0.45 * Math.max(0, Math.sin(tt * 0.7) * Math.sin(tt * 0.31 + 1)) // rachas
+            const vel = (22 + fuerza * 170) * racha
+            const D = Math.max(W, H)
+
+            // ---- capa de fondo ----
+            g.setTransform(dpr, 0, 0, dpr, 0, 0)
+            g.globalCompositeOperation = "source-over"
+            g.clearRect(0, 0, W, H)
+            // 1. aurora
+            g.globalCompositeOperation = c.dark ? "lighter" : "source-over"
+            const pal = paleta(c)
+            const centros = [
+                [0.78 + 0.12 * Math.sin(tt * 0.13), 0.18 + 0.1 * Math.cos(tt * 0.17), 0.62],
+                [0.55 + 0.25 * Math.sin(tt * 0.09 + 2), 0.05 + 0.12 * Math.sin(tt * 0.11), 0.5],
+                [0.95 + 0.1 * Math.cos(tt * 0.12 + 1), 0.55 + 0.18 * Math.sin(tt * 0.1 + 3), 0.55],
+                [0.3 + 0.2 * Math.cos(tt * 0.07 + 4), 0.9 + 0.08 * Math.sin(tt * 0.15), 0.6],
+            ]
+            centros.forEach(([x, y, r], i) => {
+                const R = D * r * (1 + 0.06 * Math.sin(tt * 0.5 + i))
+                const gr = g.createRadialGradient(x * W, y * H, 0, x * W, y * H, R)
+                const a = (c.dark ? 0.32 : 0.42) * (i === 3 ? 0.7 : 1)
+                gr.addColorStop(0, col(pal[i], a)); gr.addColorStop(0.5, col(pal[i], a * 0.4)); gr.addColorStop(1, col(pal[i], 0))
+                g.fillStyle = gr; g.fillRect(0, 0, W, H)
+            })
+            g.globalCompositeOperation = "source-over"
             // 2. sol o estrellas
             if (c.sky === "sol") {
-                const p = 0.85 + 0.15 * Math.sin(tt * 1.2)
-                const s = ctx.createRadialGradient(W * 0.82, H * 0.2, 0, W * 0.82, H * 0.2, Math.min(W, H) * 0.55 * p)
-                s.addColorStop(0, `rgba(255,248,225,${c.dark ? 0.5 : 0.75})`); s.addColorStop(0.4, "rgba(255,214,140,.25)"); s.addColorStop(1, "rgba(255,214,140,0)")
-                ctx.fillStyle = s; ctx.fillRect(0, 0, W, H)
+                const p = 1 + 0.07 * Math.sin(tt * 1.1)
+                const sx = W * 0.84, sy = H * 0.16
+                const s = g.createRadialGradient(sx, sy, 0, sx, sy, Math.min(W, H) * 0.6 * p)
+                s.addColorStop(0, `rgba(255,250,232,${c.dark ? 0.55 : 0.9})`); s.addColorStop(0.25, "rgba(255,222,150,.35)"); s.addColorStop(1, "rgba(255,210,140,0)")
+                g.fillStyle = s; g.fillRect(0, 0, W, H)
+                // rayos que giran muy despacio
+                g.save(); g.translate(sx, sy); g.rotate(tt * 0.05)
+                for (let i = 0; i < 10; i++) {
+                    g.rotate((Math.PI * 2) / 10)
+                    const L = Math.min(W, H) * (0.5 + 0.15 * Math.sin(tt * 0.8 + i * 1.7))
+                    const lg = g.createLinearGradient(0, 0, L, 0)
+                    lg.addColorStop(0, "rgba(255,236,190,.22)"); lg.addColorStop(1, "rgba(255,236,190,0)")
+                    g.fillStyle = lg; g.beginPath(); g.moveTo(0, -3); g.lineTo(L, -14); g.lineTo(L, 14); g.lineTo(0, 3); g.fill()
+                }
+                g.restore()
             }
             if (c.sky === "noche" || (c.dark && c.cloud < 0.6 && c.sky !== "lluvia")) {
-                for (const e of estrellas) {
-                    const a = (0.35 + 0.65 * (0.5 + 0.5 * Math.sin(tt * 1.6 + e.f))) * (1 - c.cloud * 0.8)
-                    ctx.fillStyle = c.dark ? `rgba(255,255,255,${a})` : col(c.ink, a * 0.35)
-                    ctx.beginPath(); ctx.arc(e.x * W, e.y * H, e.s, 0, Math.PI * 2); ctx.fill()
+                for (const s of estrellas) {
+                    const a = (0.25 + 0.75 * (0.5 + 0.5 * Math.sin(tt * 1.4 + s.f))) * (1 - c.cloud * 0.85)
+                    g.fillStyle = c.dark ? `rgba(255,255,255,${a})` : col(c.ink, a * 0.4)
+                    g.beginPath(); g.arc(s.x * W, s.y * H, s.s, 0, Math.PI * 2); g.fill()
                 }
             }
-            // 3. calor: chispas cálidas que suben despacio (desde 26°)
-            if (c.temp >= 26) {
-                const k = Math.min(1, (c.temp - 26) / 10)
-                for (const p of chispas) {
-                    p.y -= (p.v * 22 * dt) / H; p.x += (Math.sin(tt * 1.3 + p.f) * 8 * dt) / W
-                    if (p.y < -0.05) { p.y = 1.05; p.x = rnd() }
-                    const a = k * 0.7 * Math.min(1, p.y * 2)
-                    const s = ctx.createRadialGradient(p.x * W, p.y * H, 0, p.x * W, p.y * H, p.s * 3)
-                    s.addColorStop(0, `rgba(255,${Math.round(170 - 80 * k)},70,${a})`); s.addColorStop(1, "rgba(255,120,60,0)")
-                    ctx.fillStyle = s; ctx.fillRect(p.x * W - p.s * 3, p.y * H - p.s * 3, p.s * 6, p.s * 6)
-                }
-            }
-            // 4. nubes: tantas como nubosidad, grises si llueve, empujadas por el viento
-            const nN = Math.round(c.cloud * nubes.length)
-            ctx.filter = c.nubesBlur > 0 ? `blur(${c.nubesBlur}px)` : "none"
+            // 3. nubes en dos capas
+            const nN = Math.round(Math.min(1, c.cloud * 1.1) * nubes.length)
+            g.filter = c.nubesBlur > 0 ? `blur(${c.nubesBlur}px)` : "none"
+            const tono = c.sky === "lluvia" ? (c.dark ? "#5d6679" : "#8e98ab") : c.dark ? "#cfd5e2" : "#ffffff"
             for (let i = 0; i < nN; i++) {
                 const n = nubes[i]
-                n.x += (ux * (8 + vel * 0.25) * n.v * dt) / W
-                n.y += (uy * (3 + vel * 0.06) * n.v * dt) / H
-                if (n.x > 1.4) n.x = -0.4; if (n.x < -0.4) n.x = 1.4
-                if (n.y > 0.85) n.y = -0.15; if (n.y < -0.15) n.y = 0.85
-                const R = n.r * Math.max(W, 260)
-                const tono = c.sky === "lluvia" ? (c.dark ? "#6b7488" : "#9aa3b5") : c.dark ? "#c9cfdc" : "#ffffff"
-                const a = c.sky === "lluvia" ? 0.75 : c.dark ? 0.35 : 0.85
-                for (const [dx, dy, rr] of [[0, 0, 1], [-0.55, 0.15, 0.7], [0.55, 0.12, 0.75], [0.15, -0.3, 0.6]]) {
-                    const cx = n.x * W + dx * R, cy = n.y * H + dy * R * 0.6
-                    const s = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * rr)
-                    s.addColorStop(0, col(tono, a)); s.addColorStop(0.6, col(tono, a * 0.5)); s.addColorStop(1, col(tono, 0))
-                    ctx.fillStyle = s; ctx.fillRect(cx - R * rr, cy - R * rr, R * rr * 2, R * rr * 2)
+                const k = n.capa ? 1 : 0.55 // la capa de cerca va más rápido
+                n.x += (ux * (10 + vel * 0.22) * k * dt) / W
+                n.y += (uy * (4 + vel * 0.05) * k * dt) / H
+                if (n.x > 1.5) n.x = -0.5; if (n.x < -0.5) n.x = 1.5
+                if (n.y > 0.95) n.y = -0.2; if (n.y < -0.2) n.y = 0.95
+                const R = n.r * Math.max(W, 280) * (n.capa ? 1 : 0.75)
+                const a = (c.sky === "lluvia" ? 0.7 : c.dark ? 0.28 : 0.8) * (n.capa ? 1 : 0.6)
+                for (const [dx, dy, rr] of [[0, 0, 1], [-0.6, 0.18, 0.72], [0.6, 0.14, 0.78], [0.2, -0.32, 0.62], [-0.25, -0.2, 0.55]]) {
+                    const cx = n.x * W + dx * R + Math.sin(tt * 0.3 + n.f + dx) * 4, cy = n.y * H + dy * R * 0.55
+                    const s = g.createRadialGradient(cx, cy, 0, cx, cy, R * rr)
+                    s.addColorStop(0, col(tono, a)); s.addColorStop(0.55, col(tono, a * 0.55)); s.addColorStop(1, col(tono, 0))
+                    g.fillStyle = s; g.fillRect(cx - R * rr, cy - R * rr, R * rr * 2, R * rr * 2)
                 }
             }
-            ctx.filter = "none"
-            // 5. lluvia: gotas que caen inclinadas por el viento
+            g.filter = "none"
+            // 5a. calor: chispas que suben
+            if (c.temp >= 26) {
+                const k = Math.min(1, (c.temp - 26) / 10)
+                g.globalCompositeOperation = c.dark ? "lighter" : "source-over"
+                for (const p of chispas) {
+                    p.y -= (p.v * 26 * dt) / H; p.x += (Math.sin(tt * 1.4 + p.f) * 10 * dt) / W
+                    if (p.y < -0.05) { p.y = 1.05; p.x = rnd() }
+                    const a = k * 0.75 * Math.min(1, p.y * 2) * (0.6 + 0.4 * Math.sin(tt * 3 + p.f))
+                    const r = p.s * 3.2
+                    const s = g.createRadialGradient(p.x * W, p.y * H, 0, p.x * W, p.y * H, r)
+                    s.addColorStop(0, `rgba(255,${Math.round(190 - 100 * k)},80,${a})`); s.addColorStop(1, "rgba(255,120,60,0)")
+                    g.fillStyle = s; g.fillRect(p.x * W - r, p.y * H - r, r * 2, r * 2)
+                }
+                g.globalCompositeOperation = "source-over"
+            }
+            // 5b. lluvia o nieve
             if (c.sky === "lluvia") {
                 const nieve = c.temp <= 1
-                ctx.strokeStyle = nieve ? "rgba(255,255,255,.9)" : c.dark ? "rgba(190,215,255,.55)" : "rgba(60,100,190,.45)"
-                ctx.fillStyle = "rgba(255,255,255,.9)"
-                ctx.lineWidth = 1; ctx.lineCap = "round"
-                const sx = ux * (0.15 + fuerza * 0.6)
+                g.strokeStyle = c.dark ? "rgba(195,218,255,.6)" : "rgba(55,95,185,.5)"
+                g.fillStyle = c.dark ? "rgba(255,255,255,.9)" : "rgba(120,140,180,.8)"
+                g.lineWidth = 1.1; g.lineCap = "round"
+                const sx = ux * (0.12 + fuerza * 0.7)
                 for (const p of gotas) {
-                    const vy = nieve ? 40 * p.v : 380 * p.v
-                    p.y += (vy * dt) / H; p.x += (sx * vy * dt) / W + (nieve ? Math.sin(tt + p.l * 9) * 10 * dt / W : 0)
+                    const vy = nieve ? 45 * p.v : 520 * p.v
+                    p.y += (vy * dt) / H
+                    p.x += (sx * vy * dt) / W + (nieve ? (Math.sin(tt * 1.5 + p.l * 9) * 14 * dt) / W : 0)
                     if (p.y > 1.05) { p.y = -0.05; p.x = rnd() * 1.4 - 0.2 }
-                    if (nieve) { ctx.beginPath(); ctx.arc(p.x * W, p.y * H, 1.2 + p.l, 0, Math.PI * 2); ctx.fill(); continue }
-                    const L = 9 * p.l
-                    ctx.beginPath(); ctx.moveTo(p.x * W, p.y * H); ctx.lineTo(p.x * W - sx * L, p.y * H - L); ctx.stroke()
+                    if (nieve) { g.beginPath(); g.arc(p.x * W, p.y * H, 1 + p.l * 1.4, 0, Math.PI * 2); g.fill(); continue }
+                    const L = 14 * p.l
+                    g.beginPath(); g.moveTo(p.x * W, p.y * H); g.lineTo(p.x * W - sx * L, p.y * H - L); g.stroke()
                 }
             }
-            // 6. viento: hilos finos con estela que corren en la dirección del viento y ondulan un poco
-            const nH = Math.round(14 + fuerza * 56)
-            ctx.lineCap = "round"
-            for (let i = 0; i < nH; i++) {
-                const h = hilos[i]
-                const ond = Math.sin(tt * 2 + h.w) * 0.25
-                const vx = ux - uy * ond, vy = uy + ux * ond
-                h.x += (vx * vel * h.v * dt) / W; h.y += (vy * vel * h.v * dt) / H
-                h.a += dt * 0.5
-                if (h.x < -0.1 || h.x > 1.1 || h.y < -0.1 || h.y > 1.1) {
-                    // vuelve a entrar por el lado de donde sopla
-                    if (Math.abs(ux) > Math.abs(uy)) { h.x = ux > 0 ? -0.05 : 1.05; h.y = rnd() } else { h.y = uy > 0 ? -0.05 : 1.05; h.x = rnd() }
-                    h.a = 0
+
+            // ---- capa del viento: partículas con estela (la estela se borra poco a poco) ----
+            e.setTransform(dpr, 0, 0, dpr, 0, 0)
+            e.globalCompositeOperation = "destination-out"
+            e.fillStyle = `rgba(0,0,0,${0.13 + (1 - fuerza) * 0.07})`
+            e.fillRect(0, 0, W, H)
+            e.globalCompositeOperation = c.dark ? "lighter" : "source-over"
+            const n = Math.round(90 + fuerza * (MAXP - 90))
+            e.lineCap = "round"
+            // bandas de racha que cruzan la tarjeta en la dirección del viento
+            const banda = (X: number, Y: number) => 0.5 + 0.5 * Math.sin((X * ux + Y * uy) * 0.012 - tt * (1.2 + fuerza * 2.5)) * Math.sin(X * 0.004 + Y * 0.006 + tt * 0.3)
+            for (let i = 0; i < n; i++) {
+                const p = parts[i]
+                const X = p.x * W, Y = p.y * H
+                // campo de remolinos suave encima de la dirección del viento
+                const ang = Math.sin(X * 0.006 + tt * 0.35) * Math.cos(Y * 0.008 - tt * 0.27) * (1.1 - fuerza * 0.6)
+                let vx = ux * Math.cos(ang) - uy * Math.sin(ang), vy = ux * Math.sin(ang) + uy * Math.cos(ang)
+                // el cursor las aparta
+                const dx = X - px, dy = Y - py, d2 = dx * dx + dy * dy
+                if (d2 < 9000) { const f = (1 - d2 / 9000) * 2.2; const dd = Math.sqrt(d2) || 1; vx += (dx / dd) * f; vy += (dy / dd) * f }
+                const m = 0.45 + 1.1 * banda(X, Y) // 0.45 (claro entre rachas) … 1.55 (racha)
+                const sp = vel * p.v * m
+                const kmh = Math.max(2, c.wind * racha * m * p.v)
+                const nx = X + vx * sp * dt, ny = Y + vy * sp * dt
+                p.vida += dt * 0.35
+                const a = Math.min(1, p.vida * 3) * Math.min(1, (1.6 - p.vida) * 2)
+                if (a > 0) {
+                    const wc = c.dark ? wcol(kmh) : mix(wcol(kmh), c.ink, 0.22)
+                    // debajo del número, más calma: así se lee bien la temperatura
+                    const calma = 0.3 + 0.7 * Math.min(1, Math.max(0, (X / W - 0.12) / 0.5))
+                    e.strokeStyle = col(wc, (c.dark ? 0.7 : 0.62) * a * calma * (0.5 + 0.5 * Math.min(1, m)))
+                    e.lineWidth = p.s * (0.7 + 0.6 * m)
+                    e.beginPath(); e.moveTo(X, Y); e.lineTo(nx, ny); e.stroke()
                 }
-                const L = (12 + fuerza * 50) * h.l
-                const vida = Math.min(1, h.a * 2)
-                const x = h.x * W, y = h.y * H
-                const gr = ctx.createLinearGradient(x, y, x - vx * L, y - vy * L)
-                const base = c.dark ? "#ffffff" : mix(c.ink, c.color, 0.35)
-                gr.addColorStop(0, col(base, (c.dark ? 0.55 : 0.4) * vida)); gr.addColorStop(1, col(base, 0))
-                ctx.strokeStyle = gr; ctx.lineWidth = 0.8 + h.l * 0.6
-                ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - vx * L, y - vy * L); ctx.stroke()
+                p.x = nx / W; p.y = ny / H
+                if (p.vida > 1.6 || p.x < -0.05 || p.x > 1.05 || p.y < -0.05 || p.y > 1.05) { p.x = rnd(); p.y = rnd(); p.vida = 0 }
             }
-            if (!quieto) raf = requestAnimationFrame(frame)
+            if (!quieto && visible) raf = requestAnimationFrame(frame)
         }
-        frame(performance.now() + 16) // primer fotograma ya, sin esperar
-        return () => { cancelAnimationFrame(raf); ro?.disconnect() }
+        frame(performance.now() + 16)
+        return () => {
+            cancelAnimationFrame(raf); ro?.disconnect(); io?.disconnect()
+            window.removeEventListener("pointermove", mover); document.removeEventListener("pointerleave", salir)
+            fondo.remove(); estela.remove()
+        }
     }, [])
-    return <canvas ref={ref} data-cielo={uid} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }} />
+    return <div ref={ref} data-cielo={uid} style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
 }
 
 /** Número que sube hasta su valor al aparecer (escribe el texto directamente, sin re-pintar React) */
@@ -1133,8 +1222,14 @@ export function useTiempo(props: Partial<Props>) {
     // Viento: una línea magenta (más a la derecha cuanto más sopla) y flechas cada 3 h
     // La escala se ajusta al viento de estos días (hasta «Escala viento»), para que la raya se mueva de verdad
     const windHours = hours.filter((h) => h.wind != null)
-    const wScale = Math.max(12, Math.min(windMax, Math.max(0, ...windHours.map((h) => h.wind!)) * 1.15))
-    const wx = (v: number) => 24 + (Math.min(v, wScale) / wScale) * 30
+    const wVals = windHours.map((h) => h.wind!)
+    const wHi = Math.min(windMax, Math.max(0, ...wVals)),
+        wLo = Math.max(0, Math.min(wHi, ...wVals))
+    const wRange = Math.max(8, wHi - wLo)
+    const wBase = Math.max(0, wLo - wRange * 0.12)
+    const wScale = wBase + wRange * 1.15
+    // la raya va de 20 a 58 px: el mínimo de estos días pegado al borde y el máximo al lado de la lluvia
+    const wx = (v: number) => 20 + (Math.max(0, Math.min(v, wScale) - wBase) / (wScale - wBase)) * 38
     const wLine = curve(windHours.filter((_, k) => k % 2 === 0).map((h) => [wx(h.wind!), y(h.t)] as [number, number]))
     const dayStarts = [hours[0].t, ...hours.filter((h, k) => k > 0 && new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(h.t)) !== new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(hours[k - 1].t))).map((h) => h.t)]
     // flechas cada 3 h, menos justo debajo de la fecha de cada día (para no taparla)
@@ -1257,7 +1352,7 @@ export function Caja({ v, radius, children, style }: { v: ReturnType<typeof useT
             </div>
         )
     return (
-        <div ref={v.ref} style={{ ...box, position: "relative", transition: "background-color .6s ease, color .6s ease", ...style }}>
+        <div ref={v.ref} style={{ ...box, position: "relative", isolation: "isolate", transition: "background-color .6s ease, color .6s ease", ...style }}>
             <style>{v.css}</style>
             {children}
         </div>
@@ -1270,8 +1365,9 @@ export function SeccionAhora({ v }: { v: Vista }) {
     const [iaOpen, setIaOpen] = useState(false)
     return (
         <>
-            <div style={{ position: "relative", padding: "20px 20px 4px", overflow: "hidden", minHeight: 200 }}>
-                    <div aria-hidden className={`${uid}-orb`} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+            <div style={{ padding: "20px 20px 4px", minHeight: 200 }}>
+                    {/* el cielo va de fondo de toda la tarjeta, de borde a borde (se funde abajo si la tarjeta es muy alta) */}
+                    <div aria-hidden className={`${uid}-orb`} style={{ position: "absolute", top: 0, left: 0, right: 0, height: "100%", maxHeight: 820, zIndex: -1, pointerEvents: "none", WebkitMaskImage: "linear-gradient(#000 70%, transparent)", maskImage: "linear-gradient(#000 70%, transparent)" }}>
                         <Cielo color={nowCol} sky={sky} cloud={cloudNow} wind={now.wind ?? 0} dir={now.dir} temp={now.temp} dark={dark} ink={inkColor} nubesBlur={sphereBlur} uid={uid} />
                     </div>
                     {/* botón sol / luna para cambiar entre modo claro y oscuro */}
@@ -1381,7 +1477,7 @@ export function SeccionDatos({ v }: { v: Vista }) {
                                 ...(showFeels ? [[t("Sensación", "Feels like"), String(Math.round(uT(feelsOf(now.temp, now.wind, now.hum)))), "°", ALERT[feelsLevel(feelsOf(now.temp, now.wind, now.hum), null)] || nowCol, null]] : []),
                                 [t("Lluvia", "Rain"), now.rain >= 0.1 ? uR(now.rain) : "0", uRL(), rainColor, null],
                                 [t("Humedad", "Humidity"), now.hum != null ? String(Math.round(now.hum)) : "–", "%", "#33b3ad", null],
-                                [t("Viento", "Wind"), now.wind != null ? String(uV(now.wind)) : "–", uVL(), windColor, now.dir],
+                                [t("Viento", "Wind"), now.wind != null ? String(uV(now.wind)) : "–", uVL(), now.wind != null ? wcol(now.wind) : windColor, now.dir],
                             ].map(([k, v, u, c, d], n) => (
                                 <div key={String(k)} className={`${uid}-in`} style={{ paddingTop: 12, paddingLeft: n ? (showFeels ? 9 : 12) : 0, minWidth: 0, borderLeft: n ? `1px solid ${rgba(inkColor, 0.08)}` : undefined, animationDelay: `${440 + n * 70}ms` }}>
                                     <div style={labC(String(c))}>{k}</div>
@@ -1481,14 +1577,22 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                             <stop offset="0.85" stopColor={gridColor} stopOpacity={dark ? 0.4 : 0.2} />
                             <stop offset="1" stopColor={gridColor} stopOpacity={0} />
                         </linearGradient>
-                        <linearGradient id={`${uid}-wribbon`} gradientUnits="userSpaceOnUse" x1="18" x2={56} y1="0" y2="0">
-                            <stop offset="0" stopColor={windColor} stopOpacity={0} />
-                            <stop offset="1" stopColor={windColor} stopOpacity={dark ? 0.55 : 0.4} />
+                        {/* el viento cambia de color con la velocidad, hora a hora (como la temperatura) */}
+                        <linearGradient id={`${uid}-wind`} gradientUnits="userSpaceOnUse" x1="0" x2="0" y1={PAD_T} y2={yEnd}>
+                            {windHours
+                                .filter((_, k) => k % 2 === 0)
+                                .map((h) => (
+                                    <stop key={h.t} offset={((y(h.t) - PAD_T) / Math.max(1, yEnd - PAD_T)).toFixed(4)} stopColor={dark ? wcol(h.wind!) : mix(wcol(h.wind!), "#2a1f3a", 0.12)} />
+                                ))}
                         </linearGradient>
-                        <linearGradient id={`${uid}-wind`} x1="0" x2="0" y1="0" y2="1">
-                            <stop offset="0" stopColor={windColor} />
-                            <stop offset="1" stopColor={mix(windColor, "#7a4cff", 0.35)} />
+                        {/* la cinta se apaga hacia el borde izquierdo */}
+                        <linearGradient id={`${uid}-wfade`} gradientUnits="userSpaceOnUse" x1="16" x2={60} y1="0" y2="0">
+                            <stop offset="0" stopColor="#fff" stopOpacity="0" />
+                            <stop offset="1" stopColor="#fff" stopOpacity="1" />
                         </linearGradient>
+                        <mask id={`${uid}-wm`}>
+                            <rect x="0" y="0" width="70" height={H} fill={`url(#${uid}-wfade)`} />
+                        </mask>
                     </defs>
 
                     {/* rejilla fina: cada 6 h muy suave y una línea a medianoche */}
@@ -1526,9 +1630,9 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                     {/* viento: línea magenta con un brillo */}
                     {showWind && wLine && (
                         <>
-                            {wArea && <path d={wArea} fill={`url(#${uid}-wribbon)`} filter={`url(#${uid}-soft)`} />}
-                            <path d={wLine} fill="none" stroke={windColor} strokeOpacity={0.45} strokeWidth={4} filter={`url(#${uid}-soft)`} />
-                            <path className={`${uid}-draw`} pathLength={1} d={wLine} fill="none" stroke={`url(#${uid}-wind)`} strokeWidth={1.3} strokeLinecap="round" />
+                            {wArea && <path d={wArea} fill={`url(#${uid}-wind)`} fillOpacity={dark ? 0.6 : 0.5} mask={`url(#${uid}-wm)`} filter={`url(#${uid}-soft)`} />}
+                            <path d={wLine} fill="none" stroke={`url(#${uid}-wind)`} strokeOpacity={0.55} strokeWidth={5} filter={`url(#${uid}-soft)`} />
+                            <path className={`${uid}-draw`} pathLength={1} d={wLine} fill="none" stroke={`url(#${uid}-wind)`} strokeWidth={2} strokeLinecap="round" />
                         </>
                     )}
 
@@ -1597,7 +1701,7 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                     arrows.map((h, k) => (
                         <span key={h.t} style={{ position: "absolute", left: wx(h.wind!) - 20, top: y(h.t) - 6, width: 12, height: 12, transform: `rotate(${h.dir! + 180}deg)`, pointerEvents: "none" }}>
                             <svg className={`${uid}-arrow`} width="12" height="12" viewBox="0 0 12 12" style={{ display: "block", animationDelay: `${(k % 5) * -0.5}s` }}>
-                                <path d="M6 10.5V2M3 5L6 2 9 5" stroke={dark ? mix(windColor, "#ffffff", 0.2) : windColor} strokeOpacity={0.85} strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                                <path d="M6 10.5V2M3 5L6 2 9 5" stroke={dark ? mix(wcol(h.wind!), "#ffffff", 0.2) : mix(wcol(h.wind!), inkColor, 0.2)} strokeOpacity={0.9} strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
                             </svg>
                         </span>
                     ))}
@@ -1624,7 +1728,7 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                 {/* la velocidad más alta de cada día, junto a la raya del viento */}
                 {showWind &&
                     windPeaks.map((h) => (
-                        <span key={`wp${h.t}`} style={{ position: "absolute", left: wx(h.wind!) + 5, top: y(h.t) - 7, fontFamily: MONO, fontSize: 9.5, lineHeight: 1, color: dark ? mix(windColor, "#ffffff", 0.3) : mix(windColor, inkColor, 0.25), whiteSpace: "nowrap", padding: "2px 3px", borderRadius: 4, background: rgba(bgColor, 0.8), pointerEvents: "none" }}>
+                        <span key={`wp${h.t}`} style={{ position: "absolute", left: wx(h.wind!) + 5, top: y(h.t) - 7, fontFamily: MONO, fontSize: 9.5, lineHeight: 1, color: dark ? mix(wcol(h.wind!), "#ffffff", 0.3) : mix(wcol(h.wind!), inkColor, 0.35), whiteSpace: "nowrap", padding: "2px 3px", borderRadius: 4, background: rgba(bgColor, 0.8), pointerEvents: "none" }}>
                             {uV(h.wind!)}
                             <span style={{ fontSize: 7.5, marginLeft: 1, opacity: 0.8 }}>{uVL()}</span>
                         </span>
