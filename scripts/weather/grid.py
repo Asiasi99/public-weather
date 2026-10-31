@@ -210,3 +210,32 @@ def tiles(dst, composed, generated, models):
     docs["grid/index.json"] = {"v": 1, "generated": generated, "models": models, "t0": t0, "stepHours": STEP_H,
                                "res": RES, "tiles": index}
     return docs
+
+
+def mapa(dst, composed, generated, models):
+    """Los datos del mapa de la app: un índice con los puntos y un fichero por cada paso de 3 h.
+
+        mapa/index.json   {"lat":[lat×100], "lon":[lon×100], "elev":[m], "steps":[instantes], "res":0.25, …}
+        mapa/<k>.json     {"t":instante, "temp":[°C×10], "rain":[mm×10 en 3 h], "wind":[km/h], "dir":[°]}
+
+    Los valores van en el mismo orden que los puntos del índice; null donde no hay dato.
+    """
+    pids = sorted(composed, key=lambda p: (float(p[1:7]), float(p[7:])))
+    lat = [round(float(p[1:7]) * 100) for p in pids]
+    lon = [round(float(p[7:]) * 100) for p in pids]
+    steps = [datetime.fromtimestamp(t * 3600, tz=timezone.utc).strftime("%Y-%m-%dT%H:%MZ") for t in dst]
+    docs = {"mapa/index.json": {"v": 1, "generated": generated, "models": models, "res": RES, "stepHours": STEP_H,
+                                "lat": lat, "lon": lon, "elev": [composed[p]["elev"] for p in pids], "steps": steps}}
+
+    def col(f, k, scale):
+        out = []
+        for p in pids:
+            a = composed[p].get(f)
+            x = None if a is None else a[k]
+            out.append(None if x is None or np.isnan(x) else int(round(float(x) * scale)))
+        return out
+
+    for k, t in enumerate(steps):
+        docs[f"mapa/{k}.json"] = {"t": t, "temp": col("temp", k, 10), "rain": col("rain", k, 10),
+                                  "wind": col("wind", k, 1), "dir": col("windDir", k, 1)}
+    return docs

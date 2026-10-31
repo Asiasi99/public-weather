@@ -103,6 +103,14 @@ def publish_grid(store, docs, generated):
         for path, doc in out.items():
             store.put(path, doc, max_age=900)
         print(f"rejilla: {len(out) - 1} teselas con {len(composed)} puntos y {len(used)} modelos ({', '.join(used)})")
+        # El mapa de la app: un fichero por cada paso de 3 h (si falla, las teselas ya están)
+        try:
+            m = grid.mapa(dst, composed, generated, used)
+            for path, doc in m.items():
+                store.put(path, doc, max_age=900)
+            print(f"mapa: {len(m) - 1} pasos")
+        except Exception as e:
+            print(f"::warning title=Mapa::No se pudo publicar el mapa ({type(e).__name__}: {str(e)[:150]})")
     except Exception as e:
         print(f"::warning title=Rejilla::No se pudo publicar la rejilla ({type(e).__name__}: {str(e)[:150]})")
         traceback.print_exc()
