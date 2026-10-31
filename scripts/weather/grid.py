@@ -27,10 +27,15 @@ RES = 0.25
 STEP_H = 3
 HOURS = 168
 CACHE_DIR = OUT_DIR / "grid-cache"
-# Recuadros (lat_min, lat_max, lon_min, lon_max): península y Baleares, y Canarias.
-BOXES = [(35.75, 44.0, -9.75, 4.5), (27.5, 29.5, -18.25, -13.25)]
-# Teselas de 1° (esquina suroeste) que se publican.
-TILES = [(la, lo) for la in range(35, 44) for lo in range(-10, 5)] + [(la, lo) for la in range(27, 30) for lo in range(-19, -13)]
+# Recuadros (lat_min, lat_max, lon_min, lon_max): península (con Portugal) y Baleares, Canarias,
+# Francia (con Córcega) y Madeira y Azores. Prueba antes de abrir a toda Europa.
+BOXES = [
+    (35.75, 44.0, -9.75, 4.5),      # península ibérica y Baleares
+    (27.5, 29.5, -18.25, -13.25),   # Canarias
+    (41.25, 51.25, -5.25, 9.75),    # Francia y Córcega
+    (32.5, 33.25, -17.5, -16.25),   # Madeira
+    (36.75, 39.75, -31.5, -24.75),  # Azores
+]
 FIELDS = ("temp", "rain", "hum", "cloud", "cloudLow", "cloudMid", "cloudHigh")
 
 
@@ -38,15 +43,24 @@ def _key(lat, lon):
     return f"g{lat:+.2f}{lon:+.2f}"
 
 
-def points():
-    """Los puntos de la rejilla, como «ciudades» sin altura (la temperatura queda a la altura del modelo)."""
-    out = []
+def _coords():
+    seen = set()
     for la0, la1, lo0, lo1 in BOXES:
         for i in range(int(round((la1 - la0) / RES)) + 1):
             for j in range(int(round((lo1 - lo0) / RES)) + 1):
-                lat, lon = round(la0 + i * RES, 2), round(lo0 + j * RES, 2)
-                out.append(City(id=_key(lat, lon), name="", lat=lat, lon=lon, tz="UTC", elev=None))
-    return out
+                c = (round(la0 + i * RES, 2), round(lo0 + j * RES, 2))
+                if c not in seen:  # los recuadros se solapan: cada punto una sola vez
+                    seen.add(c)
+                    yield c
+
+
+def points():
+    """Los puntos de la rejilla, como «ciudades» sin altura (la temperatura queda a la altura del modelo)."""
+    return [City(id=_key(lat, lon), name="", lat=lat, lon=lon, tz="UTC", elev=None) for lat, lon in _coords()]
+
+
+# Teselas de 1° (esquina suroeste) que se publican: las que tocan algún punto de la rejilla.
+TILES = sorted({(math.floor(lat), math.floor(lon)) for lat, lon in _coords()})
 
 
 def is_grid(pid):
@@ -79,17 +93,14 @@ def _interp(src_t, vals, dst_t, max_gap=6.0):
     """Valores en dst_t interpolando entre las muestras de alrededor (si están a menos de max_gap horas)."""
     v = np.array([np.nan if x is None else x for x in vals], dtype=float)
     ok = ~np.isnan(v)
-    out = np.full(len(dst_t), np.nan)
     if ok.sum() < 2:
-        return out
+        return np.full(len(dst_t), np.nan)
     t, v = src_t[ok], v[ok]
-    idx = np.searchsorted(t, dst_t)
-    for k, (i, x) in enumerate(zip(idx, dst_t)):
-        if 0 < i < len(t) and t[i] - t[i - 1] <= max_gap:
-            a = (x - t[i - 1]) / (t[i] - t[i - 1])
-            out[k] = v[i - 1] + a * (v[i] - v[i - 1])
-        elif i < len(t) and t[i] == x:
-            out[k] = v[i]
+    # Todo a la vez con numpy (con miles de puntos, el bucle en Python tardaba minutos)
+    out = np.interp(dst_t, t, v, left=np.nan, right=np.nan)
+    i = np.clip(np.searchsorted(t, dst_t), 1, len(t) - 1)
+    exact = np.isin(dst_t, t)
+    out[(t[i] - t[i - 1] > max_gap) & ~exact] = np.nan
     return out
 
 
@@ -173,14 +184,17 @@ def _r(arr, nd=0):
 def tiles(dst, composed, generated, models):
     """Las teselas listas para publicar: {ruta: documento}."""
     t0 = datetime.fromtimestamp(dst[0] * 3600, tz=timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
-    by_coord = {}
+    # Cada punto, a su tesela (y a la vecina si cae en el borde): así no se recorren todos por tesela
+    buckets = {}
     for pid, r in composed.items():
         lat, lon = float(pid[1:7]), float(pid[7:])
-        by_coord[(lat, lon)] = r
+        for la in {math.floor(lat), math.ceil(lat) - 1} if lat == math.floor(lat) else {math.floor(lat)}:
+            for lo in {math.floor(lon), math.ceil(lon) - 1} if lon == math.floor(lon) else {math.floor(lon)}:
+                buckets.setdefault((la, lo), []).append(((lat, lon), r))
     docs, index = {}, []
     for la, lo in TILES:
         pts = []
-        for (lat, lon), r in by_coord.items():
+        for (lat, lon), r in buckets.get((la, lo), []):
             if la <= lat <= la + 1 and lo <= lon <= lo + 1:
                 pts.append({"lat": lat, "lon": lon, "elev": r["elev"], "n": r["n"],
                             "temp": _r(r["temp"], 1), "rain": _r(r.get("rain"), 1), "hum": _r(r.get("hum")),

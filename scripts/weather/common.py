@@ -110,6 +110,80 @@ def _nearest(gid, city, land=None, elev=None):
     return choose_point([(n["index"], n["distance"]) for n in near], city, land, elev)
 
 
+def _nearest_fast(gid, cities, land=None, elev=None):
+    """Lo mismo que _nearest pero para todos los puntos a la vez, en rejillas lat/lon regulares (casi todas).
+
+    Con miles de puntos (la rejilla de Europa), buscar uno a uno con eccodes tarda minutos por modelo: aquí se
+    calculan los 4 vecinos de cada punto directamente con la geometría de la rejilla y se elige igual que
+    choose_point (cerca, altura parecida, en tierra). Devuelve (índices, km) o None si la rejilla no es regular.
+    """
+    g = lambda k: eccodes.codes_get(gid, k)
+    if g("gridType") != "regular_ll" or g("iScansNegatively") or not g("jPointsAreConsecutive") == 0:
+        return None
+    ni, nj = int(g("Ni")), int(g("Nj"))
+    la1, la2 = float(g("latitudeOfFirstGridPointInDegrees")), float(g("latitudeOfLastGridPointInDegrees"))
+    lo1, lo2 = float(g("longitudeOfFirstGridPointInDegrees")), float(g("longitudeOfLastGridPointInDegrees"))
+    if lo2 < lo1:
+        lo2 += 360.0
+    dlo = (lo2 - lo1) / (ni - 1)
+    is_global = abs((lo2 - lo1 + dlo) - 360.0) < dlo * 0.5
+    clat = np.array([c.lat for c in cities], dtype=float)
+    clon = np.array([c.lon for c in cities], dtype=float)
+    clon = np.where(clon < lo1 - 1e-9, clon + 360.0, clon)
+    clon = np.where(clon > lo1 + 360.0, clon - 360.0, clon)
+    fj = (clat - la1) / (la2 - la1) * (nj - 1)
+    fi = (clon - lo1) / dlo
+    inside = (fj >= -0.5) & (fj <= nj - 0.5) & (is_global | ((fi >= -0.5) & (fi <= ni - 0.5)))
+    j0 = np.clip(np.floor(fj).astype(int), 0, nj - 1)
+    i0 = np.floor(fi).astype(int)
+    lats = np.linspace(la1, la2, nj)
+    best_s = np.full(len(cities), np.inf)
+    best_i = np.zeros(len(cities), dtype=int)
+    best_km = np.full(len(cities), np.inf)
+    celev = np.array([np.nan if c.elev is None else c.elev for c in cities], dtype=float)
+    for dj in (0, 1):
+        for di in (0, 1):
+            jj = np.clip(j0 + dj, 0, nj - 1)
+            ii = (i0 + di) % ni if is_global else np.clip(i0 + di, 0, ni - 1)
+            plat, plon = np.radians(lats[jj]), np.radians(lo1 + ii * dlo)
+            a = np.sin((plat - np.radians(clat)) / 2) ** 2 + np.cos(plat) * np.cos(np.radians(clat)) * np.sin((plon - np.radians(clon)) / 2) ** 2
+            km = 2 * 6371.0 * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
+            idx = jj * ni + ii
+            s = km.copy()
+            if elev is not None:
+                d = np.abs(np.asarray(elev)[idx] - celev)
+                s += np.where(np.isnan(d), 0.0, KM_PER_METRE * d)
+            if land is not None:
+                s += np.where(np.asarray(land)[idx] < 0.5, SEA_PENALTY_KM, 0.0)
+            better = s < best_s
+            best_s, best_i, best_km = np.where(better, s, best_s), np.where(better, idx, best_i), np.where(better, km, best_km)
+    best_km = np.where(inside, best_km, np.inf)
+    return best_i, best_km
+
+
+def _choose_all(gid, cities, land=None, elev=None):
+    """Índice y km del punto elegido para cada ciudad o punto de rejilla. Usa la vía rápida si la rejilla es
+    regular y comprueba con eccodes unos cuantos puntos; si no coinciden, vuelve a buscar uno a uno."""
+    fast = None
+    try:
+        fast = _nearest_fast(gid, cities, land, elev)
+    except Exception as e:  # noqa: BLE001
+        print(f"  vecinos: vía rápida no disponible ({e})")
+    if fast is not None:
+        idx, km = fast
+        sample = list(range(0, len(cities), max(1, len(cities) // 25)))[:25]
+        bad = 0
+        for k in sample:
+            ref_i, ref_km = _nearest(gid, cities[k], land, elev)
+            if np.isfinite(ref_km) and np.isfinite(km[k]) and ref_i != idx[k] and abs(ref_km - km[k]) > 1.0:
+                bad += 1
+        if bad <= 1:
+            return idx, km
+        print(f"  vecinos: la vía rápida no coincide con eccodes en {bad}/{len(sample)} puntos; se busca uno a uno")
+    near = [_nearest(gid, c, land, elev) for c in cities]
+    return np.array([n[0] for n in near]), np.array([n[1] for n in near])
+
+
 def _grid_key(gid):
     return tuple(eccodes.codes_get(gid, k) for k in GRID_KEYS)
 
@@ -163,10 +237,8 @@ def read_points(paths, cities, with_names=False, names_by_path=None):
                     # El punto de cada ciudad se busca una vez por rejilla; después basta indexar el campo.
                     key = _grid_key(gid)
                     if key not in grids:
-                        near = [_nearest(gid, c, land.get(key), elev.get(key)) for c in cities]
-                        idx = np.array([n[0] for n in near])
-                        grids[key] = (idx, GridPoints(np.array([n[1] for n in near]),
-                                                      elev[key][idx] if key in elev else None))
+                        idx, km = _choose_all(gid, cities, land.get(key), elev.get(key))
+                        grids[key] = (idx, GridPoints(km, elev[key][idx] if key in elev else None))
                     idx, grid_points = grids[key]
                     values = _values(gid)[idx]
                     data.setdefault(name, {})[end] = (start, to_standard(name, units, values))
