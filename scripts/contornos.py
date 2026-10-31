@@ -28,11 +28,12 @@ def _dp(pts, tol):
         a, b = stack.pop()
         (x1, y1), (x2, y2) = pts[a], pts[b]
         dx, dy = x2 - x1, y2 - y1
-        n = (dx * dx + dy * dy) ** 0.5 or 1e-12
+        n = (dx * dx + dy * dy) ** 0.5
         best, bi = 0.0, -1
         for i in range(a + 1, b):
             x, y = pts[i]
-            d = abs(dy * x - dx * y + x2 * y1 - y2 * x1) / n
+            # En un anillo cerrado los dos extremos son el mismo punto: entonces vale la distancia a ese punto
+            d = abs(dy * x - dx * y + x2 * y1 - y2 * x1) / n if n > 1e-12 else ((x - x1) ** 2 + (y - y1) ** 2) ** 0.5
             if d > best:
                 best, bi = d, i
         if best > tol and bi > 0:
