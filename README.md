@@ -16,3 +16,8 @@ Las claves van en los *secrets* del repositorio (`SUPABASE_URL`, `SUPABASE_SERVI
 Météo-France ARPEGE y AROME (Licence Ouverte 2.0), Met Office (© Crown copyright, CC BY-SA 4.0),
 ECCC GEM (Licencia del Gobierno Abierto de Canadá), AEMET OpenData, NOAA aviationweather.gov,
 GeoNames (CC BY 4.0).
+
+## Componentes de la web (Framer)
+
+`framer/` tiene los componentes de código de la web de Framer (también se ven en la web publicada).
+Framer los carga desde aquí: `https://raw.githubusercontent.com/Asiasi99/public-weather/main/framer/<archivo>.tsx`.
