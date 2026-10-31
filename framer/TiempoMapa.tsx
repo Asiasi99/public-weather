@@ -58,6 +58,7 @@ type Props = {
     blur: number
     soloTierra: boolean
     bordes: boolean
+    isotermas: boolean
     radius: number
     baseUrl: string
 }
@@ -81,6 +82,7 @@ export default function TiempoMapa(props: Partial<Props>) {
         blur = 1,
         soloTierra = true,
         bordes = false,
+        isotermas = true,
         radius = 0,
         baseUrl = BASE,
     } = props
@@ -182,6 +184,7 @@ export default function TiempoMapa(props: Partial<Props>) {
             gy = (lat: number) => Math.round((la1 - lat) / r) + 2
         const rgbaArr = new Float32Array(nx * ny * 4)
         const has = new Uint8Array(nx * ny)
+        const tv = new Float32Array(nx * ny).fill(NaN) // temperatura (en la unidad elegida) para las isotermas
         for (let i = 0; i < idx.lat.length; i++) {
             const lat = idx.lat[i] / 100,
                 lon = idx.lon[i] / 100
@@ -195,6 +198,7 @@ export default function TiempoMapa(props: Partial<Props>) {
                 if (v == null) continue
                 col = tcol(v / 10)
                 a = 0.92
+                tv[y * nx + x] = uT(v / 10)
             } else if (capa === "lluvia") {
                 const v = paso.rain[i]
                 if (v == null) continue
@@ -238,6 +242,22 @@ export default function TiempoMapa(props: Partial<Props>) {
                             n++
                         }
                     if (n) add.push([y * nx + x, sr / n, sg / n, sb / n, sa / n])
+                    if (n) {
+                        let tn = 0,
+                            ts = 0
+                        for (let dy = -1; dy <= 1; dy++)
+                            for (let dx = -1; dx <= 1; dx++) {
+                                const xx = x + dx,
+                                    yy = y + dy
+                                if (xx < 0 || yy < 0 || xx >= nx || yy >= ny) continue
+                                const v = tv[yy * nx + xx]
+                                if (!isNaN(v)) {
+                                    ts += v
+                                    tn++
+                                }
+                            }
+                        if (tn) tv[y * nx + x] = ts / tn
+                    }
                 }
             for (const [p, a1, a2, a3, a4] of add) {
                 rgbaArr.set([a1, a2, a3, a4], p * 4)
@@ -256,10 +276,10 @@ export default function TiempoMapa(props: Partial<Props>) {
             img.data[p * 4 + 3] = has[p] ? Math.round(rgbaArr[p * 4 + 3] * 255) : 0
         }
         sctx.putImageData(img, 0, 0)
-        ctx.save()
         // Solo sobre tierra: se recorta con los países (los anillos cerrados de los contornos)
+        let tierra: Path2D | null = null
         if (soloTierra && cont) {
-            const tierra = new Path2D()
+            tierra = new Path2D()
             for (const l of cont.lines) {
                 if (l.length < 6 || l[0] !== l[l.length - 2] || l[1] !== l[l.length - 1]) continue
                 for (let j = 0; j < l.length; j += 2) {
@@ -270,14 +290,101 @@ export default function TiempoMapa(props: Partial<Props>) {
                 }
                 tierra.closePath()
             }
-            ctx.clip(tierra)
         }
+        ctx.save()
+        if (tierra) ctx.clip(tierra)
         ctx.imageSmoothingEnabled = true
         ctx.imageSmoothingQuality = "high"
         ctx.filter = blur > 0 ? `blur(${((r * kx) / 3) * blur}px)` : "none"
         // Cada píxel del lienzo pequeño, centrado en su punto de la rejilla
         ctx.drawImage(small, px(lo0 - 2.5 * r), py(la1 + 2.5 * r), nx * r * kx, ny * r * ky)
         ctx.restore()
+
+        // Isotermas: líneas que unen los sitios con la misma temperatura (cada 2 °C o 4 °F), con su valor
+        if (capa === "temp" && isotermas) {
+            // Suavizar un poco los valores para que las líneas no salgan en zigzag
+            const sm = new Float32Array(nx * ny).fill(NaN)
+            for (let y = 0; y < ny; y++)
+                for (let x = 0; x < nx; x++) {
+                    let n = 0,
+                        sum = 0
+                    for (let dy = -1; dy <= 1; dy++)
+                        for (let dx = -1; dx <= 1; dx++) {
+                            const xx = x + dx,
+                                yy = y + dy
+                            if (xx < 0 || yy < 0 || xx >= nx || yy >= ny) continue
+                            const v = tv[yy * nx + xx]
+                            if (!isNaN(v)) {
+                                sum += v
+                                n++
+                            }
+                        }
+                    if (n >= 5) sm[y * nx + x] = sum / n
+                }
+            const cx = (gxp: number) => px(lo0 + (gxp - 2) * r),
+                cy = (gyp: number) => py(la1 - (gyp - 2) * r)
+            const step = uT(10) - uT(0) > 15 ? 4 : 2
+            let vmin = Infinity,
+                vmax = -Infinity
+            for (const v of sm) if (!isNaN(v)) (vmin = Math.min(vmin, v)), (vmax = Math.max(vmax, v))
+            ctx.save()
+            if (tierra) ctx.clip(tierra)
+            ctx.strokeStyle = rgba(ink, dark ? 0.45 : 0.38)
+            ctx.lineWidth = 0.9
+            ctx.lineCap = "round"
+            const etiquetasIso: [number, number, number][] = []
+            for (let L = Math.ceil(vmin / step) * step; L <= vmax; L += step) {
+                ctx.beginPath()
+                const mids: [number, number][] = []
+                for (let y = 0; y < ny - 1; y++)
+                    for (let x = 0; x < nx - 1; x++) {
+                        const a = sm[y * nx + x],
+                            b = sm[y * nx + x + 1],
+                            c = sm[(y + 1) * nx + x + 1],
+                            d = sm[(y + 1) * nx + x]
+                        if (isNaN(a) || isNaN(b) || isNaN(c) || isNaN(d)) continue
+                        // Cuadrados en marcha: dónde cruza el nivel L cada lado de la celda
+                        const pts: [number, number][] = []
+                        const cruza = (v1: number, v2: number, x1: number, y1: number, x2: number, y2: number) => {
+                            if ((v1 < L) !== (v2 < L)) {
+                                const k = (L - v1) / (v2 - v1)
+                                pts.push([cx(x1 + (x2 - x1) * k), cy(y1 + (y2 - y1) * k)])
+                            }
+                        }
+                        cruza(a, b, x, y, x + 1, y)
+                        cruza(b, c, x + 1, y, x + 1, y + 1)
+                        cruza(d, c, x, y + 1, x + 1, y + 1)
+                        cruza(a, d, x, y, x, y + 1)
+                        for (let i = 0; i + 1 < pts.length; i += 2) {
+                            ctx.moveTo(pts[i][0], pts[i][1])
+                            ctx.lineTo(pts[i + 1][0], pts[i + 1][1])
+                            mids.push([(pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2])
+                        }
+                    }
+                ctx.stroke()
+                // Una etiqueta cada ~160 px de línea, sin pisarse con otras
+                for (const [mx, my] of mids) {
+                    if (mx < 14 || my < 10 || mx > W - 14 || my > H - 8) continue
+                    if (tierra && !ctx.isPointInPath(tierra, mx * dpr, my * dpr)) continue
+                    if (etiquetasIso.some(([ex, ey, el]) => (ex - mx) ** 2 + (ey - my) ** 2 < (el === L ? 180 * 180 : 60 * 60))) continue
+                    etiquetasIso.push([mx, my, L])
+                }
+            }
+            ctx.restore()
+            ctx.font = `500 10px ${MONO}`
+            ctx.textAlign = "center"
+            ctx.textBaseline = "middle"
+            for (const [x, y, L] of etiquetasIso) {
+                const txt = `${Math.round(L)}°`
+                const w = ctx.measureText(txt).width + 8
+                ctx.fillStyle = rgba(bg, 0.85)
+                ctx.beginPath()
+                ctx.roundRect?.(x - w / 2, y - 7, w, 14, 7)
+                ctx.fill()
+                ctx.fillStyle = rgba(ink, 0.8)
+                ctx.fillText(txt, x, y + 0.5)
+            }
+        }
         // 2) contornos (apagados por defecto: control «Bordes»)
         if (bordes && cont) {
             ctx.beginPath()
@@ -320,7 +427,7 @@ export default function TiempoMapa(props: Partial<Props>) {
                 ctx.restore()
             }
         }
-    }, [idx, paso, cont, capa, zona, W, H, dark, blur, tempCold, tempMild, tempWarm, tempHot, rainColor, soloTierra, bordes])
+    }, [idx, paso, cont, capa, zona, W, H, dark, blur, tempCold, tempMild, tempWarm, tempHot, rainColor, soloTierra, bordes, isotermas])
 
     const valorEn = (lat: number, lon: number) => {
         if (!idx || !paso) return null
@@ -338,7 +445,9 @@ export default function TiempoMapa(props: Partial<Props>) {
         if (capa === "lluvia") return paso.rain[best] == null || paso.rain[best]! < 1 ? null : uR(paso.rain[best]! / 10)
         return paso.wind[best] == null ? null : String(uV(paso.wind[best]!))
     }
-    const etiquetas = useMemo(() => CIUDADES.filter(([, la, lo]) => lo >= lo0 && lo <= lo1 && la >= la0 && la <= la1), [zona])
+    // Pocas ciudades, para que el mapa respire (las isotermas ya dan la temperatura)
+    const PRINCIPALES = new Set(["Madrid", "Barcelona", "Sevilla", "Bilbao", "Lisboa", "Paris", "Lyon", "Bordeaux", "Marseille", "Valencia", "A Coruña", "Palma", "Las Palmas", "S/C Tenerife", "Ponta Delgada", "Funchal"])
+    const etiquetas = useMemo(() => CIUDADES.filter(([n, la, lo]) => PRINCIPALES.has(n) && lo >= lo0 && lo <= lo1 && la >= la0 && la <= la1), [zona])
 
     const fmtPaso = (s: string) =>
         new Intl.DateTimeFormat(t("es-ES", "en-GB"), { timeZone: "Europe/Madrid", weekday: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(s)).replace(".", "")
@@ -366,13 +475,7 @@ export default function TiempoMapa(props: Partial<Props>) {
                     </button>
                 ))}
             </div>
-            <div style={{ display: "flex", gap: 6, padding: "8px 20px 10px", flexWrap: "wrap" }}>
-                {ZONAS.map((z) => (
-                    <button key={z.id} type="button" onClick={() => setZona(z)} style={{ ...chip(zona.id === z.id), padding: "3px 9px", fontSize: 12 }}>
-                        {t(z.es, z.en)}
-                    </button>
-                ))}
-            </div>
+            <div style={{ height: 10 }} />
             {err ? (
                 <div style={{ padding: 20, fontSize: 13, color: soft }}>{t("No se pudo cargar el mapa.", "Couldn't load the map.")}</div>
             ) : (
@@ -434,6 +537,7 @@ addPropertyControls(TiempoMapa, {
     blur: { type: ControlType.Number, title: "Difuminado", min: 0, max: 3, step: 0.1, defaultValue: 1 },
     soloTierra: { type: ControlType.Boolean, title: "Solo tierra", defaultValue: true },
     bordes: { type: ControlType.Boolean, title: "Bordes", defaultValue: false },
+    isotermas: { type: ControlType.Boolean, title: "Isotermas", defaultValue: true },
     radius: { type: ControlType.Number, title: "Esquinas", min: 0, max: 40, defaultValue: 0 },
     baseUrl: { type: ControlType.String, title: "URL de datos", defaultValue: BASE },
 })
