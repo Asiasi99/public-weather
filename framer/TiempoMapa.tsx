@@ -7,7 +7,7 @@
  */
 import { addPropertyControls, ControlType } from "framer"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { BASE, MONO, mix, rgba, SANS, scale, setIdioma, t, uR, uRL, uT, useAjustesWeb, useTema, uV, uVL } from "./TiempoNucleo.tsx"
+import { BASE, hexRgb, MONO, mix, rgba, SANS, scale, setIdioma, t, uR, uRL, uT, useAjustesWeb, useTema, uV, uVL } from "./TiempoNucleo.tsx"
 
 type Indice = { res: number; lat: number[]; lon: number[]; steps: string[] }
 type Paso = { t: string; temp: (number | null)[]; rain: (number | null)[]; wind: (number | null)[]; dir: (number | null)[] }
@@ -206,7 +206,7 @@ export default function TiempoMapa(props: Partial<Props>) {
                 col = scale(VIENTO, v)
                 a = 0.88
             }
-            const [cr, cg, cb] = col.startsWith("#") ? [parseInt(col.slice(1, 3), 16), parseInt(col.slice(3, 5), 16), parseInt(col.slice(5, 7), 16)] : [0, 0, 0]
+            const [cr, cg, cb] = hexRgb(col) // vale para «#3d6bff» y para «rgb(61, 107, 255)» (como da Framer los colores)
             const q = (y * nx + x) * 4
             rgbaArr[q] = cr
             rgbaArr[q + 1] = cg

@@ -256,7 +256,7 @@ function buildHours(doc: Doc, hours: number): Hour[] {
 }
 
 // ---------------- Colores ----------------
-function hexRgb(c: string): number[] {
+export function hexRgb(c: string): number[] {
     const v = (c || "").trim()
     if (v.startsWith("#")) {
         const h = v.length === 4 || v.length === 5 ? [...v.slice(1, 4)].map((x) => x + x).join("") : v.slice(1, 7)
