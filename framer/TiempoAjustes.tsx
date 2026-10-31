@@ -11,9 +11,10 @@ import { cambiarAjustes, MONO, rgba, SANS, setTemaManual, t, useAjustesWeb, useT
 type Props = { theme: "auto" | "claro" | "oscuro"; align: "izquierda" | "derecha"; abierto: boolean }
 
 /**
- * @framerSupportedLayoutWidth any
- * @framerSupportedLayoutHeight auto
- * @framerIntrinsicWidth 390
+ * @framerSupportedLayoutWidth fixed
+ * @framerSupportedLayoutHeight fixed
+ * @framerIntrinsicWidth 36
+ * @framerIntrinsicHeight 36
  */
 export default function TiempoAjustes(props: Partial<Props>) {
     const { theme = "auto", align = "derecha", abierto = false } = props
@@ -53,7 +54,7 @@ export default function TiempoAjustes(props: Partial<Props>) {
     const modo = theme !== "auto" ? theme : manual ?? "auto"
 
     return (
-        <div style={{ width: "100%", fontFamily: SANS, color: ink, display: "flex", flexDirection: "column", alignItems: align === "derecha" ? "flex-end" : "flex-start" }}>
+        <div style={{ position: "relative", width: 36, height: 36, fontFamily: SANS, color: ink }}>
             <button
                 type="button"
                 onClick={() => setOpen((v) => !v)}
@@ -67,7 +68,7 @@ export default function TiempoAjustes(props: Partial<Props>) {
                 </svg>
             </button>
             {open && (
-                <div style={{ width: "100%", marginTop: 10, padding: "6px 16px 16px", borderRadius: 16, background: bg, border: `1px solid ${rgba(ink, 0.1)}`, boxShadow: "0 8px 30px rgba(0,0,0,.08)" }}>
+                <div style={{ position: "absolute", top: 44, [align === "derecha" ? "right" : "left"]: 0, zIndex: 50, width: 320, maxWidth: "calc(100vw - 32px)", padding: "6px 16px 16px", borderRadius: 16, background: bg, border: `1px solid ${rgba(ink, 0.1)}`, boxShadow: "0 12px 40px rgba(0,0,0,.14)" }}>
                     {fila(t("Temperatura", "Temperature"), <Opciones valor={aj.temp} opciones={[["C", "°C"], ["F", "°F"]]} cambiar={set("temp")} />)}
                     {fila(t("Viento", "Wind"), <Opciones valor={aj.viento} opciones={[["kmh", "km/h"], ["mph", "mph"], ["ms", "m/s"], ["kn", t("nudos", "knots")]]} cambiar={set("viento")} />)}
                     {fila(t("Lluvia", "Rain"), <Opciones valor={aj.lluvia} opciones={[["mm", "mm"], ["in", t("pulgadas", "inches")]]} cambiar={set("lluvia")} />)}
