@@ -679,7 +679,7 @@ function Esfera({ color, sky, cloud, windK, blur, uid }: { color: string; sky: S
     `
     const full = { position: "absolute" as const, inset: 0, borderRadius: "50%" }
     const mancha = (col: string, size: string, x: string, y: string, cls: string, op = 0.95) => (
-        <div className={cls} style={{ position: "absolute", left: x, top: y, width: size, height: size, background: `radial-gradient(circle at 40% 40%, ${col}, ${rgba(col, 0)} 70%)`, filter: `blur(${10 + blur * 2}px)`, opacity: op, mixBlendMode: "normal" }} />
+        <div className={cls} style={{ position: "absolute", left: x, top: y, width: size, height: size, background: `radial-gradient(circle at 40% 40%, ${col}, ${rgba(col, 0)} 70%)`, filter: "blur(14px)", opacity: op, mixBlendMode: "normal" }} />
     )
     const grano = `url("data:image/svg+xml;utf8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .55 0'/></filter><rect width='100%' height='100%' filter='url(#n)'/></svg>")}")`
     return (
@@ -687,8 +687,10 @@ function Esfera({ color, sky, cloud, windK, blur, uid }: { color: string; sky: S
             <style>{css}</style>
             {/* 1. halo */}
             <div className={`${k}-halo`} style={{ ...full, inset: "-6%", background: `radial-gradient(closest-side, ${rgba(c1, 0.55)}, ${rgba(c2, 0.22)} 55%, transparent 78%)`, filter: "blur(18px)" }} />
+            {/* halo de colores: un anillo arcoíris que gira despacio, muy difuminado */}
+            <div className={`${k}-sheen`} style={{ ...full, inset: "6%", animationDuration: "40s", background: "conic-gradient(from 90deg, #ff5f6d, #ffc371, #f9f871, #5fffd0, #5fb8ff, #9a6bff, #ff5fd1, #ff5f6d)", WebkitMaskImage: "radial-gradient(circle, transparent 58%, #000 66%, transparent 80%)", maskImage: "radial-gradient(circle, transparent 58%, #000 66%, transparent 80%)", filter: "blur(10px)", opacity: 0.45, mixBlendMode: "screen" }} />
             {/* 2. el líquido */}
-            <div style={{ ...full, inset: "10%", overflow: "hidden", background: `radial-gradient(circle at 35% 30%, ${c1} 0%, ${base} 45%, ${deep} 100%)`, WebkitMaskImage: "radial-gradient(circle, #000 66%, rgba(0,0,0,.85) 70%, transparent 72%)", maskImage: "radial-gradient(circle, #000 66%, rgba(0,0,0,.85) 70%, transparent 72%)" }}>
+            <div style={{ ...full, inset: "10%", overflow: "hidden", filter: blur > 0 ? `blur(${blur}px)` : undefined, background: `radial-gradient(circle at 35% 30%, ${c1} 0%, ${base} 45%, ${deep} 100%)`, WebkitMaskImage: "radial-gradient(circle, #000 66%, rgba(0,0,0,.85) 70%, transparent 72%)", maskImage: "radial-gradient(circle, #000 66%, rgba(0,0,0,.85) 70%, transparent 72%)" }}>
                 {mancha(c2, "70%", "-5%", "-8%", `${k}-o1`)}
                 {mancha(c3, "75%", "35%", "30%", `${k}-o2`)}
                 {mancha(c4, "55%", "10%", "50%", `${k}-o3`, 0.8)}
