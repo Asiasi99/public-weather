@@ -206,6 +206,47 @@ function dayCorr(list: { corr?: N }[]): number | null {
     const v = list.map((h) => h.corr).filter((x): x is number => x != null)
     return v.length >= 3 ? v.reduce((s, x) => s + x, 0) / v.length : null
 }
+/**
+ * Por qué corrige la IA ese día (las 1-2 razones que más pesan), mirando cuándo corrige (noche o tarde)
+ * y cómo está el cielo en esas horas. Es una explicación probable: la IA no «dice» sus motivos, pero
+ * aprende de los errores de los modelos aquí, y esos errores casi siempre vienen de estas situaciones.
+ */
+function razonesIA(list: Hour[], esNoche: (t: number) => boolean, fmt: (v: number) => string): string[] {
+    const m = (xs: N[]) => {
+        const v = xs.filter((x): x is number => x != null)
+        return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null
+    }
+    const nube = (h: Hour) => h.cloud ?? (h.lo != null || h.mid != null || h.hi != null ? Math.max(h.lo ?? 0, h.mid ?? 0, h.hi ?? 0) : null)
+    const noche = list.filter((h) => esNoche(h.t)),
+        dia = list.filter((h) => !esNoche(h.t))
+    const cN = m(noche.map((h) => h.corr)),
+        cD = m(dia.map((h) => h.corr))
+    const nubN = m(noche.map(nube)) ?? 50,
+        nubD = m(dia.map(nube)) ?? 50
+    const vN = m(noche.map((h) => h.wind)) ?? 0
+    const llueve = dia.some((h) => h.rain >= 0.3)
+    const sd = m(list.map((h) => h.sd))
+    const out: [number, string][] = []
+    if (cN != null && Math.abs(cN) >= 0.4) {
+        const x = fmt(cN)
+        if (cN < 0 && nubN < 35 && vN < 12) out.push([Math.abs(cN), t(`Noche despejada y sin viento: el suelo se enfría más de lo que dan los modelos (${x}).`, `Clear, calm night: the ground cools more than the models say (${x}).`)])
+        else if (cN < 0) out.push([Math.abs(cN), t(`Aquí las noches suelen ser más frías de lo que dan los modelos (${x}).`, `Nights here tend to be colder than the models say (${x}).`)])
+        else if (nubN >= 60) out.push([cN, t(`Nubes de noche: hacen de manta y no dejan enfriar tanto (${x}).`, `Clouds at night act as a blanket and stop it cooling as much (${x}).`)])
+        else if (vN >= 15) out.push([cN, t(`Viento de noche: mezcla el aire y no deja que enfríe (${x}).`, `Wind at night mixes the air and stops it cooling (${x}).`)])
+        else out.push([cN, t(`Aquí las noches suelen ser menos frías de lo que dan los modelos (${x}).`, `Nights here tend to be milder than the models say (${x}).`)])
+    }
+    if (cD != null && Math.abs(cD) >= 0.4) {
+        const x = fmt(cD)
+        if (cD < 0 && llueve) out.push([Math.abs(cD), t(`Lluvia: refresca y la tarde no sube tanto (${x}).`, `Rain cools things down, so the afternoon stays fresher (${x}).`)])
+        else if (cD < 0 && nubD >= 60) out.push([Math.abs(cD), t(`Muchas nubes: frenan el sol y la tarde no sube tanto (${x}).`, `Thick cloud blocks the sun, so the afternoon stays cooler (${x}).`)])
+        else if (cD < 0) out.push([Math.abs(cD), t(`Por la tarde los modelos suelen pasarse de calor aquí (${x}).`, `The models usually run too warm here in the afternoon (${x}).`)])
+        else if (nubD < 30) out.push([cD, t(`Sol pleno: aquí la tarde suele calentar más de lo que dan los modelos (${x}).`, `Full sun: afternoons here get warmer than the models say (${x}).`)])
+        else out.push([cD, t(`Por la tarde suele hacer más de lo que dan los modelos (${x}).`, `Afternoons tend to be warmer than the models say (${x}).`)])
+    }
+    if (sd != null && sd >= 1.5) out.push([sd * 0.4, t(`Los modelos no se ponen de acuerdo (±${fmt(sd).replace(/^[+−]/, "")}): se fía de los que mejor aciertan aquí.`, `The models disagree (±${fmt(sd).replace(/^[+−]/, "")}): it trusts the ones that do best here.`)])
+    if (!out.length) return [t("Los modelos ya cuadran con lo que se mide aquí: apenas corrige.", "The models already match what's measured here: barely any correction.")]
+    return out.sort((a, b) => b[0] - a[0]).slice(0, 2).map((r) => r[1])
+}
 const signo = (v: number) => (Math.abs(v) < 0.05 ? dec1(0) : `${v > 0 ? "+" : "−"}${dec1(Math.abs(v))}`)
 
 function meanDir(ds: N[], ws: N[]) {
@@ -563,6 +604,8 @@ export type Props = {
     grain: number
     texture: "puntos" | "grano" | "nada"
     sphereBlur: number
+    /** dónde va el cielo animado: dentro de la tarjeta, fuera (lo pinta la pieza TiempoFondo detrás de la página) o ninguno */
+    cielo: "tarjeta" | "fuera" | "no"
     showFeels: boolean
     phraseStyle: Estilo
     customPhrase: string
@@ -603,6 +646,7 @@ export const DEFAULTS: Props = {
     grain: 0.6,
     texture: "puntos" as const,
     sphereBlur: 4,
+    cielo: "tarjeta",
     showFeels: true,
     phraseStyle: "practico" as Estilo,
     customPhrase: "",
@@ -629,7 +673,7 @@ type Sky = "sol" | "nubes" | "lluvia" | "noche"
  *      suaves; con rachas aceleran; si pasas el cursor se apartan;
  *   5. lluvia (o nieve si hace ≤1°) inclinada por el viento, y chispas cálidas que suben con mucho calor.
  */
-function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur, acento, uid }: { color: string; acento?: string; sky: Sky; cloud: number; wind: number; dir: number | null; temp: number; dark: boolean; ink: string; nubesBlur: number; uid: string }) {
+export function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur, acento, uid }: { color: string; acento?: string; sky: Sky; cloud: number; wind: number; dir: number | null; temp: number; dark: boolean; ink: string; nubesBlur: number; uid: string }) {
     const ref = useRef<HTMLDivElement>(null)
     const cfg = useRef({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur, acento })
     cfg.current = { color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur, acento }
@@ -1360,6 +1404,16 @@ export function Caja({ v, radius, children, style }: { v: ReturnType<typeof useT
     )
 }
 
+/** El cielo animado, a sangre, para ponerlo detrás de la página (pieza TiempoFondo) */
+export function CieloFondo({ v, fundido }: { v: Vista; fundido: number }) {
+    const m = fundido > 0 ? `linear-gradient(#000 ${100 - fundido}%, transparent)` : undefined
+    return (
+        <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", WebkitMaskImage: m, maskImage: m }}>
+            <Cielo color={v.nowCol} sky={v.sky} cloud={v.cloudNow} wind={v.now.wind ?? 0} dir={v.now.dir} temp={v.now.temp} dark={v.dark} ink={v.inkColor} nubesBlur={v.p.sphereBlur} acento={v.p.windColor} uid={v.uid} />
+        </div>
+    )
+}
+
 export function SeccionAhora({ v }: { v: Vista }) {
     const { p, CG, CLOUD_W, CW, G, H, PAD_B, PAD_T, RW, RX, X0, X1, aiEnd, aiOn, alerts, arrows, cloudNow, cols, css, cx0, dayKey, dayLight, dayStarts, dec, fLine, fPts, feels, feelsLevel, feelsNow, fmtDay, fmtHour, fmtRange, fmtWd, fr, fresh, gradStops, groups, h0, hasLayers, hours, lab, labC, lat, lon, lowCloud, maeIa, maeMed, marks, night, now, nowCol, phrase, pushRun, rainDays, rainProbOf, rainRuns, rec, sit, sky, stateLabel, sunMarks, suns, tArea, tLine, tMax, tMin, tPts, tStops, tcol, today, todayMax, todayMin, tx, tz, wArea, wLine, wPts, wScale, windHours, windPeaks, wx, y, yEnd, uid, W, dark, toggleTheme, bgColor, inkColor, softColor, cloudColor, gridColor, doc } = v
     const { cityId, baseUrl, days, hourHeight, showHeader, showWind, showRain, showClouds, showAI, showSpread, showScore, tempCold, tempMild, tempWarm, tempHot, windColor, rainColor, lineWidth, blur, grain, texture, sphereBlur, showFeels, phraseStyle, customPhrase, showAlerts, theme, windMax, radius, animate } = p
@@ -1367,10 +1421,14 @@ export function SeccionAhora({ v }: { v: Vista }) {
     return (
         <>
             <div style={{ padding: "20px 20px 4px", minHeight: 200 }}>
-                    {/* el cielo va de fondo de toda la tarjeta, de borde a borde (se funde abajo si la tarjeta es muy alta) */}
-                    <div aria-hidden className={`${uid}-orb`} style={{ position: "absolute", top: 0, left: 0, right: 0, height: "100%", maxHeight: 820, zIndex: -1, pointerEvents: "none", WebkitMaskImage: "linear-gradient(#000 70%, transparent)", maskImage: "linear-gradient(#000 70%, transparent)" }}>
-                        <Cielo color={nowCol} sky={sky} cloud={cloudNow} wind={now.wind ?? 0} dir={now.dir} temp={now.temp} dark={dark} ink={inkColor} nubesBlur={sphereBlur} acento={windColor} uid={uid} />
-                    </div>
+                    {p.cielo === "tarjeta" && (
+                        <>
+                        {/* el cielo va de fondo de toda la tarjeta, de borde a borde (se funde abajo si la tarjeta es muy alta) */}
+                        <div aria-hidden className={`${uid}-orb`} style={{ position: "absolute", top: 0, left: 0, right: 0, height: "100%", maxHeight: 820, zIndex: -1, pointerEvents: "none", WebkitMaskImage: "linear-gradient(#000 70%, transparent)", maskImage: "linear-gradient(#000 70%, transparent)" }}>
+                            <Cielo color={nowCol} sky={sky} cloud={cloudNow} wind={now.wind ?? 0} dir={now.dir} temp={now.temp} dark={dark} ink={inkColor} nubesBlur={sphereBlur} acento={windColor} uid={uid} />
+                        </div>
+                        </>
+                    )}
                     {/* botón sol / luna para cambiar entre modo claro y oscuro */}
                     <button
                         onClick={toggleTheme}
@@ -1722,6 +1780,16 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                         dayCorr(g.list) == null ? null : (
                             <span key={`c${g.key}`} title={t("Corrección de la IA ese día: cuánto sube (+) o baja (−) lo que decían los modelos", "AI correction that day: how much it raises (+) or lowers (−) the models")} style={{ position: "absolute", right: CLOUD_W + 4, top: k === 0 ? 4 : y(g.start) + 4, padding: "1px 5px", borderRadius: 999, border: `1px solid ${rgba(tempMild, 0.45)}`, background: rgba(bgColor, 0.85), fontFamily: MONO, fontSize: 8.5, lineHeight: 1.3, color: inkColor, whiteSpace: "nowrap", pointerEvents: "none" }}>
                                 <span style={{ color: tempMild }}>✦</span> {signo(uTd(dayCorr(g.list)!))}°
+                            </span>
+                        )
+                    )}
+                {/* por qué corrige la IA cada día, en letra pequeña debajo de su pastilla */}
+                {showSpread &&
+                    showAI &&
+                    groups.map((g, k) =>
+                        dayCorr(g.list) == null ? null : (
+                            <span key={`r${g.key}`} style={{ position: "absolute", right: CLOUD_W + 4, top: (k === 0 ? 4 : y(g.start) + 4) + 17, width: Math.min(170, W * 0.45), textAlign: "right", fontFamily: SANS, fontSize: 9.5, lineHeight: 1.3, color: softColor, textShadow: `0 0 4px ${bgColor}, 0 0 2px ${bgColor}, 0 0 1px ${bgColor}`, pointerEvents: "none", textWrap: "pretty" as any }}>
+                                {razonesIA(g.list, (tt) => dayLight(tt) < 0.5, (x) => `${signo(uTd(x))}°`).join(" ")}
                             </span>
                         )
                     )}

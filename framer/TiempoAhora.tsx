@@ -1,5 +1,5 @@
 /**
- * TiempoAhora — una pieza del tiempo: la esfera, la temperatura en grande, el estado con la etiqueta ✦ IA y la frase.
+ * TiempoAhora — una pieza del tiempo: el cielo animado, la temperatura en grande, el estado con la etiqueta ✦ IA y la frase.
  * Usa la ciudad «global» (la que elige SelectorCiudad) o la que pongas en el panel. El tema claro/oscuro es común a todas las piezas.
  */
 import { addPropertyControls, ControlType } from "framer"
@@ -13,7 +13,7 @@ import { BASE, Caja, SeccionAhora, useTiempo, type Props } from "./TiempoNucleo.
 export default function TiempoAhora(props: Partial<Props>) {
     const v = useTiempo(props)
     return (
-        <Caja v={v} radius={props.radius ?? 0}>
+        <Caja v={v} radius={props.radius ?? 0} style={props.cielo === "fuera" ? { background: "transparent" } : undefined}>
             {v.ready && <SeccionAhora v={v} />}
         </Caja>
     )
@@ -21,7 +21,8 @@ export default function TiempoAhora(props: Partial<Props>) {
 
 addPropertyControls(TiempoAhora, {
     cityId: { type: ControlType.String, title: "Ciudad", defaultValue: "global", placeholder: "global o madrid, sevilla…" },
-    sphereBlur: { type: ControlType.Number, title: "Difuminado nubes", min: 0, max: 12, step: 0.5, defaultValue: 4 },
+    cielo: { type: ControlType.Enum, title: "Cielo", options: ["tarjeta", "fuera", "no"], optionTitles: ["Tarjeta", "Fuera", "No"], defaultValue: "tarjeta", displaySegmentedControl: true },
+    sphereBlur: { type: ControlType.Number, title: "Difuminado nubes", hidden: (p: any) => p.cielo !== "tarjeta", min: 0, max: 12, step: 0.5, defaultValue: 4 },
     showPhrase: { type: ControlType.Boolean, title: "Frase", defaultValue: false },
     phraseStyle: {
         type: ControlType.Enum,
