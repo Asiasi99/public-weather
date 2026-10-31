@@ -1,0 +1,21 @@
+# Comprueba (sin enseñar las claves) que SUPABASE_URL apunta al proyecto que leen la app y la web.
+name: Comprobar claves
+
+on:
+  workflow_dispatch:
+
+jobs:
+  claves:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          AEMET_API_KEY: ${{ secrets.AEMET_API_KEY }}
+        run: |
+          host=$(echo "$SUPABASE_URL" | sed -E 's#^https?://##; s#/.*##')
+          ref=${host%%.*}
+          if [ "$host" = "tmnnidlzmwxgpxufqkgm.supabase.co" ]; then echo "::notice::SUPABASE_URL correcta"; else echo "::warning::SUPABASE_URL apunta a otro proyecto (empieza por ${ref:0:4}…, longitud ${#host}); la app lee tmnn…"; fi
+          [ -n "$SUPABASE_SERVICE_KEY" ] && echo "::notice::SUPABASE_SERVICE_KEY puesta (${#SUPABASE_SERVICE_KEY} caracteres)" || echo "::warning::falta SUPABASE_SERVICE_KEY"
+          [ -n "$AEMET_API_KEY" ] && echo "::notice::AEMET_API_KEY puesta" || echo "::warning::falta AEMET_API_KEY"
