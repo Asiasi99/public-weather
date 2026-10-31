@@ -22,13 +22,14 @@ export default function TiempoAhora(props: Partial<Props>) {
 addPropertyControls(TiempoAhora, {
     cityId: { type: ControlType.String, title: "Ciudad", defaultValue: "global", placeholder: "global o madrid, sevilla…" },
     sphereBlur: { type: ControlType.Number, title: "Difuminado esfera", min: 0, max: 12, step: 0.5, defaultValue: 4 },
+    showPhrase: { type: ControlType.Boolean, title: "Frase", defaultValue: false },
     phraseStyle: {
         type: ControlType.Enum,
         title: "Tipo de frase",
         options: ["practico", "mezcla", "loQueViene", "clasico", "poetico", "humor", "minimo", "propia"],
         optionTitles: ["Consejos", "Frase + consejo", "Lo que viene", "Clásica", "Poética", "Con humor", "Mínima (datos)", "Escribo yo"],
         defaultValue: "practico",
-        hidden: (p: any) => !p.showHeader,
+        hidden: (p: any) => !p.showPhrase,
     },
     customPhrase: { type: ControlType.String, title: "Tu frase", defaultValue: "", placeholder: "Escribe aquí…", hidden: (p: any) => p.phraseStyle !== "propia" },
     showAI: { type: ControlType.Boolean, title: "Etiquetas IA", defaultValue: true },

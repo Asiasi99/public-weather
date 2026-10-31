@@ -534,6 +534,7 @@ export type Props = {
     showScore: boolean
     showModels: boolean
     idioma: "auto" | "es" | "en"
+    showPhrase: boolean
     bgColor: string
     inkColor: string
     softColor: string
@@ -573,6 +574,7 @@ export const DEFAULTS: Props = {
     showScore: true,
     showModels: true,
     idioma: "auto" as const,
+    showPhrase: false,
     bgColor: "#f5efe3",
     inkColor: "#1d1a17",
     softColor: "#8a7f72",
@@ -1198,9 +1200,12 @@ export function SeccionAhora({ v }: { v: Vista }) {
                                 )}
                             </div>
                         )}
+                        {/* la frase de debajo (apagada por defecto: control «Frase») */}
+                        {p.showPhrase && (
                         <div className={`${uid}-in`} style={{ fontFamily: SANS, fontWeight: 500, fontSize: Math.round(Math.min(phrase.length > 34 ? 25 : 31, W * (phrase.length > 34 ? 0.066 : 0.08))), lineHeight: 1.12, letterSpacing: "-0.025em", marginTop: 8, maxWidth: phrase.length > 34 ? "92%" : "78%", animationDelay: "340ms", textWrap: "balance" as any }}>
-                            {phrase}
-                        </div>
+                                {phrase}
+                            </div>
+                        )}
                 </div>
             </div>
         </>
