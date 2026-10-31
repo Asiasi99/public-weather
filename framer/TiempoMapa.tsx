@@ -56,6 +56,7 @@ type Props = {
     tempHot: string
     rainColor: string
     blur: number
+    soloTierra: boolean
     radius: number
     baseUrl: string
 }
@@ -77,6 +78,7 @@ export default function TiempoMapa(props: Partial<Props>) {
         tempHot = "#ff3d3d",
         rainColor = "#3d6bff",
         blur = 1,
+        soloTierra = true,
         radius = 0,
         baseUrl = BASE,
     } = props
@@ -205,6 +207,21 @@ export default function TiempoMapa(props: Partial<Props>) {
             o.fillRect(px(lon) - cw / 2, py(lat) - ch / 2, cw, ch)
         }
         ctx.save()
+        // Solo sobre tierra: se recorta con los países (los anillos cerrados de los contornos)
+        if (soloTierra && cont) {
+            const tierra = new Path2D()
+            for (const l of cont.lines) {
+                if (l.length < 6 || l[0] !== l[l.length - 2] || l[1] !== l[l.length - 1]) continue
+                for (let j = 0; j < l.length; j += 2) {
+                    const x = px(l[j] / 100),
+                        y = py(l[j + 1] / 100)
+                    if (j) tierra.lineTo(x, y)
+                    else tierra.moveTo(x, y)
+                }
+                tierra.closePath()
+            }
+            ctx.clip(tierra)
+        }
         ctx.filter = `blur(${Math.max(1, (r * kx) / 2.2) * blur}px)`
         ctx.drawImage(off, 0, 0, W, H)
         ctx.restore()
@@ -250,7 +267,7 @@ export default function TiempoMapa(props: Partial<Props>) {
                 ctx.restore()
             }
         }
-    }, [idx, paso, cont, capa, zona, W, H, dark, blur, tempCold, tempMild, tempWarm, tempHot, rainColor])
+    }, [idx, paso, cont, capa, zona, W, H, dark, blur, tempCold, tempMild, tempWarm, tempHot, rainColor, soloTierra])
 
     const valorEn = (lat: number, lon: number) => {
         if (!idx || !paso) return null
@@ -386,6 +403,7 @@ addPropertyControls(TiempoMapa, {
     tempHot: { type: ControlType.Color, title: "Temp. 32°", defaultValue: "#ff3d3d" },
     rainColor: { type: ControlType.Color, title: "Lluvia", defaultValue: "#3d6bff" },
     blur: { type: ControlType.Number, title: "Difuminado", min: 0, max: 3, step: 0.1, defaultValue: 1 },
+    soloTierra: { type: ControlType.Boolean, title: "Solo tierra", defaultValue: true },
     radius: { type: ControlType.Number, title: "Esquinas", min: 0, max: 40, defaultValue: 0 },
     baseUrl: { type: ControlType.String, title: "URL de datos", defaultValue: BASE },
 })
