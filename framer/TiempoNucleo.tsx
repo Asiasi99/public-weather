@@ -745,7 +745,7 @@ function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur, uid }
             }
             if (!quieto) raf = requestAnimationFrame(frame)
         }
-        raf = requestAnimationFrame(frame)
+        frame(performance.now() + 16) // primer fotograma ya, sin esperar
         return () => { cancelAnimationFrame(raf); ro?.disconnect() }
     }, [])
     return <canvas ref={ref} data-cielo={uid} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }} />
