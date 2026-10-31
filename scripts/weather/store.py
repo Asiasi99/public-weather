@@ -15,6 +15,9 @@ class Store:
         self.key = os.environ.get("SUPABASE_SERVICE_KEY", "").strip()
         self.bucket = os.environ.get("SUPABASE_BUCKET", "weather")
         self.http = requests.Session()
+        # En GitHub Actions, sin claves no se publica nada: mejor fallar (en rojo) que «terminar bien» sin subir.
+        if os.environ.get("GITHUB_ACTIONS") == "true" and not (self.base and self.key):
+            raise RuntimeError("Faltan SUPABASE_URL o SUPABASE_SERVICE_KEY en los secrets del repositorio: no se puede publicar.")
 
     @property
     def remote(self):
