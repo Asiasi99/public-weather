@@ -1788,9 +1788,16 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                     showAI &&
                     groups.map((g, k) =>
                         dayCorr(g.list) == null ? null : (
-                            <span key={`r${g.key}`} style={{ position: "absolute", right: CLOUD_W + 4, top: (k === 0 ? 4 : y(g.start) + 4) + 17, width: Math.min(170, W * 0.45), textAlign: "right", fontFamily: SANS, fontSize: 9.5, lineHeight: 1.3, color: softColor, textShadow: `0 0 4px ${bgColor}, 0 0 2px ${bgColor}, 0 0 1px ${bgColor}`, pointerEvents: "none", textWrap: "pretty" as any }}>
-                                {razonesIA(g.list, (tt) => dayLight(tt) < 0.5, (x) => `${signo(uTd(x))}°`).join(" ")}
-                            </span>
+                            (() => {
+                                // se ve la razón principal; pasando el ratón, todas
+                                const rz = razonesIA(g.list, (tt) => dayLight(tt) < 0.5, (x) => `${signo(uTd(x))}°`)
+                                return (
+                                    <span key={`r${g.key}`} title={rz.join("\n")} style={{ position: "absolute", right: CLOUD_W + 4, top: (k === 0 ? 4 : y(g.start) + 4) + 18, width: Math.min(150, W * 0.42), textAlign: "right", fontFamily: SANS, fontSize: 9.5, lineHeight: 1.3, color: softColor, textShadow: `0 0 4px ${bgColor}, 0 0 2px ${bgColor}, 0 0 1px ${bgColor}`, textWrap: "pretty" as any, cursor: rz.length > 1 ? "help" : "default" }}>
+                                        {rz[0]}
+                                        {rz.length > 1 && <span style={{ color: tempMild }}> +1</span>}
+                                    </span>
+                                )
+                            })()
                         )
                     )}
 
