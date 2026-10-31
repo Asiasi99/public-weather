@@ -278,18 +278,19 @@ export function scale(stops: [number, string][], v: number) {
     return stops[stops.length - 1][1]
 }
 
-/** Colores del viento según la velocidad (km/h): calma azul-verde → amarillo → naranja → magenta → violeta */
-export const WIND_STOPS: [number, string][] = [
-    [0, "#6fc8ff"],
-    [8, "#3fd9b4"],
-    [18, "#b5e04a"],
-    [28, "#ffc53a"],
-    [40, "#ff7a3a"],
-    [55, "#ff3f7f"],
-    [75, "#c03cff"],
-    [100, "#7a4cff"],
+/**
+ * Colores del viento según la velocidad (km/h), distintos de los de la temperatura:
+ * calma lavanda pálida → violeta → magenta («Color viento») → rosa-rojo intenso con temporal.
+ */
+export const windStops = (acento = "#e0248a"): [number, string][] => [
+    [0, "#d9d4ff"],
+    [10, "#ab9cff"],
+    [22, "#7c5cff"],
+    [35, "#b43cf0"],
+    [50, acento],
+    [75, "#ff2d55"],
 ]
-export const wcol = (kmh: number) => scale(WIND_STOPS, kmh)
+export const wcol = (kmh: number, acento?: string) => scale(windStops(acento), kmh)
 
 // Curva suave que pasa por todos los puntos (Catmull-Rom), vale para curvas verticales
 function curve(p: [number, number][]): string {
@@ -628,10 +629,10 @@ type Sky = "sol" | "nubes" | "lluvia" | "noche"
  *      suaves; con rachas aceleran; si pasas el cursor se apartan;
  *   5. lluvia (o nieve si hace ≤1°) inclinada por el viento, y chispas cálidas que suben con mucho calor.
  */
-function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur, uid }: { color: string; sky: Sky; cloud: number; wind: number; dir: number | null; temp: number; dark: boolean; ink: string; nubesBlur: number; uid: string }) {
+function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur, acento, uid }: { color: string; acento?: string; sky: Sky; cloud: number; wind: number; dir: number | null; temp: number; dark: boolean; ink: string; nubesBlur: number; uid: string }) {
     const ref = useRef<HTMLDivElement>(null)
-    const cfg = useRef({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur })
-    cfg.current = { color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur }
+    const cfg = useRef({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur, acento })
+    cfg.current = { color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur, acento }
     useEffect(() => {
         const box = ref.current
         if (!box) return
@@ -818,7 +819,7 @@ function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur, uid }
                 p.vida += dt * 0.35
                 const a = Math.min(1, p.vida * 3) * Math.min(1, (1.6 - p.vida) * 2)
                 if (a > 0) {
-                    const wc = c.dark ? wcol(kmh) : mix(wcol(kmh), c.ink, 0.22)
+                    const wc = c.dark ? wcol(kmh, c.acento) : mix(wcol(kmh, c.acento), c.ink, 0.25)
                     // debajo del número, más calma: así se lee bien la temperatura
                     const calma = 0.3 + 0.7 * Math.min(1, Math.max(0, (X / W - 0.12) / 0.5))
                     e.strokeStyle = col(wc, (c.dark ? 0.7 : 0.62) * a * calma * (0.5 + 0.5 * Math.min(1, m)))
@@ -1368,7 +1369,7 @@ export function SeccionAhora({ v }: { v: Vista }) {
             <div style={{ padding: "20px 20px 4px", minHeight: 200 }}>
                     {/* el cielo va de fondo de toda la tarjeta, de borde a borde (se funde abajo si la tarjeta es muy alta) */}
                     <div aria-hidden className={`${uid}-orb`} style={{ position: "absolute", top: 0, left: 0, right: 0, height: "100%", maxHeight: 820, zIndex: -1, pointerEvents: "none", WebkitMaskImage: "linear-gradient(#000 70%, transparent)", maskImage: "linear-gradient(#000 70%, transparent)" }}>
-                        <Cielo color={nowCol} sky={sky} cloud={cloudNow} wind={now.wind ?? 0} dir={now.dir} temp={now.temp} dark={dark} ink={inkColor} nubesBlur={sphereBlur} uid={uid} />
+                        <Cielo color={nowCol} sky={sky} cloud={cloudNow} wind={now.wind ?? 0} dir={now.dir} temp={now.temp} dark={dark} ink={inkColor} nubesBlur={sphereBlur} acento={windColor} uid={uid} />
                     </div>
                     {/* botón sol / luna para cambiar entre modo claro y oscuro */}
                     <button
@@ -1477,7 +1478,7 @@ export function SeccionDatos({ v }: { v: Vista }) {
                                 ...(showFeels ? [[t("Sensación", "Feels like"), String(Math.round(uT(feelsOf(now.temp, now.wind, now.hum)))), "°", ALERT[feelsLevel(feelsOf(now.temp, now.wind, now.hum), null)] || nowCol, null]] : []),
                                 [t("Lluvia", "Rain"), now.rain >= 0.1 ? uR(now.rain) : "0", uRL(), rainColor, null],
                                 [t("Humedad", "Humidity"), now.hum != null ? String(Math.round(now.hum)) : "–", "%", "#33b3ad", null],
-                                [t("Viento", "Wind"), now.wind != null ? String(uV(now.wind)) : "–", uVL(), now.wind != null ? wcol(now.wind) : windColor, now.dir],
+                                [t("Viento", "Wind"), now.wind != null ? String(uV(now.wind)) : "–", uVL(), now.wind != null ? wcol(now.wind, windColor) : windColor, now.dir],
                             ].map(([k, v, u, c, d], n) => (
                                 <div key={String(k)} className={`${uid}-in`} style={{ paddingTop: 12, paddingLeft: n ? (showFeels ? 9 : 12) : 0, minWidth: 0, borderLeft: n ? `1px solid ${rgba(inkColor, 0.08)}` : undefined, animationDelay: `${440 + n * 70}ms` }}>
                                     <div style={labC(String(c))}>{k}</div>
@@ -1582,7 +1583,7 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                             {windHours
                                 .filter((_, k) => k % 2 === 0)
                                 .map((h) => (
-                                    <stop key={h.t} offset={((y(h.t) - PAD_T) / Math.max(1, yEnd - PAD_T)).toFixed(4)} stopColor={dark ? wcol(h.wind!) : mix(wcol(h.wind!), "#2a1f3a", 0.12)} />
+                                    <stop key={h.t} offset={((y(h.t) - PAD_T) / Math.max(1, yEnd - PAD_T)).toFixed(4)} stopColor={dark ? wcol(h.wind!, windColor) : mix(wcol(h.wind!, windColor), "#2a1f3a", 0.12)} />
                                 ))}
                         </linearGradient>
                         {/* la cinta se apaga hacia el borde izquierdo */}
@@ -1701,7 +1702,7 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                     arrows.map((h, k) => (
                         <span key={h.t} style={{ position: "absolute", left: wx(h.wind!) - 20, top: y(h.t) - 6, width: 12, height: 12, transform: `rotate(${h.dir! + 180}deg)`, pointerEvents: "none" }}>
                             <svg className={`${uid}-arrow`} width="12" height="12" viewBox="0 0 12 12" style={{ display: "block", animationDelay: `${(k % 5) * -0.5}s` }}>
-                                <path d="M6 10.5V2M3 5L6 2 9 5" stroke={dark ? mix(wcol(h.wind!), "#ffffff", 0.2) : mix(wcol(h.wind!), inkColor, 0.2)} strokeOpacity={0.9} strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                                <path d="M6 10.5V2M3 5L6 2 9 5" stroke={dark ? mix(wcol(h.wind!, windColor), "#ffffff", 0.2) : mix(wcol(h.wind!, windColor), inkColor, 0.2)} strokeOpacity={0.9} strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
                             </svg>
                         </span>
                     ))}
@@ -1728,7 +1729,7 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                 {/* la velocidad más alta de cada día, junto a la raya del viento */}
                 {showWind &&
                     windPeaks.map((h) => (
-                        <span key={`wp${h.t}`} style={{ position: "absolute", left: wx(h.wind!) + 5, top: y(h.t) - 7, fontFamily: MONO, fontSize: 9.5, lineHeight: 1, color: dark ? mix(wcol(h.wind!), "#ffffff", 0.3) : mix(wcol(h.wind!), inkColor, 0.35), whiteSpace: "nowrap", padding: "2px 3px", borderRadius: 4, background: rgba(bgColor, 0.8), pointerEvents: "none" }}>
+                        <span key={`wp${h.t}`} style={{ position: "absolute", left: wx(h.wind!) + 5, top: y(h.t) - 7, fontFamily: MONO, fontSize: 9.5, lineHeight: 1, color: dark ? mix(wcol(h.wind!, windColor), "#ffffff", 0.3) : mix(wcol(h.wind!, windColor), inkColor, 0.35), whiteSpace: "nowrap", padding: "2px 3px", borderRadius: 4, background: rgba(bgColor, 0.8), pointerEvents: "none" }}>
                             {uV(h.wind!)}
                             <span style={{ fontSize: 7.5, marginLeft: 1, opacity: 0.8 }}>{uVL()}</span>
                         </span>
