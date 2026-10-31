@@ -21,7 +21,7 @@ export default function TiempoAhora(props: Partial<Props>) {
 
 addPropertyControls(TiempoAhora, {
     cityId: { type: ControlType.String, title: "Ciudad", defaultValue: "global", placeholder: "global o madrid, sevilla…" },
-    sphereBlur: { type: ControlType.Number, title: "Difuminado esfera", min: 0, max: 12, step: 0.5, defaultValue: 4 },
+    sphereBlur: { type: ControlType.Number, title: "Difuminado nubes", min: 0, max: 12, step: 0.5, defaultValue: 4 },
     showPhrase: { type: ControlType.Boolean, title: "Frase", defaultValue: false },
     phraseStyle: {
         type: ControlType.Enum,

@@ -48,7 +48,7 @@ addPropertyControls(TiempoVertical, {
     days: { type: ControlType.Number, title: "Días", min: 1, max: 7, step: 1, defaultValue: 7 },
     hourHeight: { type: ControlType.Number, title: "Alto por hora", min: 4, max: 24, step: 1, unit: " px", defaultValue: 9 },
     showHeader: { type: ControlType.Boolean, title: "Ahora (esfera)", defaultValue: true },
-    sphereBlur: { type: ControlType.Number, title: "Difuminado esfera", min: 0, max: 12, step: 0.5, defaultValue: 4, hidden: (p: any) => !p.showHeader },
+    sphereBlur: { type: ControlType.Number, title: "Difuminado nubes", min: 0, max: 12, step: 0.5, defaultValue: 4, hidden: (p: any) => !p.showHeader },
     showWind: { type: ControlType.Boolean, title: "Viento", defaultValue: true },
     showRain: { type: ControlType.Boolean, title: "Lluvia", defaultValue: true },
     showFeels: { type: ControlType.Boolean, title: "Sensación térmica", defaultValue: true },

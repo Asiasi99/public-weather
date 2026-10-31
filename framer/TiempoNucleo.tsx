@@ -601,127 +601,154 @@ export const DEFAULTS: Props = {
 
 let uidN = 0
 
-// ---------------- La esfera (la de ayer, con la paleta de este componente) ----------------
-function toHsl(hex: string): [number, number, number] {
-    const [r, g, b] = hexRgb(hex).map((v) => v / 255)
-    const mx = Math.max(r, g, b),
-        mn = Math.min(r, g, b)
-    const l = (mx + mn) / 2
-    if (mx === mn) return [0, 0, l]
-    const d = mx - mn
-    const s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn)
-    const h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4
-    return [h * 60, s, l]
-}
-function fromHsl(h: number, s: number, l: number) {
-    h = ((h % 360) + 360) % 360
-    const f = (n: number) => {
-        const k = (n + h / 30) % 12
-        const a = s * Math.min(l, 1 - l)
-        return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))))
-    }
-    return `#${[f(0), f(8), f(4)].map((v) => v.toString(16).padStart(2, "0")).join("")}`
-}
-const shift = (hex: string, dh: number, dl = 0, sat = 1) => {
-    const [h, s, l] = toHsl(hex)
-    return fromHsl(h + dh, Math.min(1, s * sat), Math.max(0, Math.min(1, l + dl)))
-}
+// ---------------- El cielo de partículas ----------------
 type Sky = "sol" | "nubes" | "lluvia" | "noche"
 /**
- * La esfera: un orbe de luz líquida con el color de la temperatura.
+ * El cielo: un sistema de partículas que dibuja el tiempo de ahora detrás de la temperatura.
  *
- * Capas, de fondo a frente:
- *   1. un halo que respira alrededor;
- *   2. dentro del círculo, 4 manchas de color (tonos vecinos del de la temperatura) que se mueven y
- *      cambian de forma muy despacio, difuminadas: parece un líquido que gira; con viento van más rápido;
- *   3. un brillo cónico que gira (como la luz en una pompa) y el grano fino encima;
- *   4. el tiempo de ahora: sol que late, nubes que pasan, lluvia que cae o estrellas que parpadean;
- *   5. el reflejo de arriba a la izquierda y un borde de luz.
+ * Como mirar por la ventana: el viento son hilos finos que corren en la dirección real (y más rápido
+ * cuanto más sopla), las nubes son manchas suaves que pasan empujadas por ese viento (más y más grises
+ * cuanto más nublado), la lluvia cae inclinada por el viento, de noche hay estrellas y con sol un
+ * resplandor. El color de fondo es el de la temperatura: frío azul, templado verde, calor naranja/rojo.
  */
-function Esfera({ color, sky, cloud, windK, blur, uid }: { color: string; sky: Sky; cloud: number; windK: number; blur: number; uid: string }) {
-    const night = sky === "noche"
-    let base = color
-    if (cloud > 0.4) base = mix(base, "#8f98ad", (cloud - 0.4) * 0.6)
-    if (sky === "lluvia") base = mix(base, "#3a64d8", 0.45)
-    if (night) base = shift(base, 0, -0.12, 0.85)
-    const c1 = shift(base, 0, 0.1, 1),
-        c2 = shift(base, 28, 0.02, 1),
-        c3 = shift(base, -32, -0.04, 0.95),
-        c4 = night ? "#2a2f7a" : shift(base, 60, 0.06, 0.9),
-        deep = night ? "#0f1446" : shift(base, 10, -0.26, 0.9)
-    const v = 1 - 0.65 * windK // más viento, todo más rápido
-    const s = (seg: number) => `${(seg * v).toFixed(1)}s`
-    const k = uid
-    const css = `
-        @keyframes ${k}-o1 { 0%{transform:translate(-8%,-6%) rotate(0deg)} 50%{transform:translate(10%,8%) rotate(180deg)} 100%{transform:translate(-8%,-6%) rotate(360deg)} }
-        @keyframes ${k}-o2 { 0%{transform:translate(10%,-10%) rotate(0deg)} 50%{transform:translate(-12%,6%) rotate(-180deg)} 100%{transform:translate(10%,-10%) rotate(-360deg)} }
-        @keyframes ${k}-o3 { 0%{transform:translate(0,12%) scale(1)} 50%{transform:translate(-6%,-12%) scale(1.15)} 100%{transform:translate(0,12%) scale(1)} }
-        @keyframes ${k}-morph { 0%,100%{border-radius:42% 58% 63% 37% / 41% 44% 56% 59%} 33%{border-radius:61% 39% 45% 55% / 52% 63% 37% 48%} 66%{border-radius:37% 63% 51% 49% / 60% 38% 62% 40%} }
-        @keyframes ${k}-spin { to { transform: rotate(360deg) } }
-        @keyframes ${k}-halo { 0%,100%{opacity:.55; transform:scale(.97)} 50%{opacity:.9; transform:scale(1.04)} }
-        @keyframes ${k}-float { 0%,100%{transform:translateY(-1.5%)} 50%{transform:translateY(1.5%)} }
-        @keyframes ${k}-sun { 0%,100%{opacity:.75; transform:scale(.95)} 50%{opacity:1; transform:scale(1.08)} }
-        @keyframes ${k}-cloud { from{transform:translateX(-60%)} to{transform:translateX(60%)} }
-        @keyframes ${k}-rain { from{background-position:0 0} to{background-position:-30px 160px} }
-        @keyframes ${k}-tw { 0%,100%{opacity:.15} 50%{opacity:1} }
-        .${k}-o1{animation:${k}-o1 ${s(18)} ease-in-out infinite, ${k}-morph ${s(14)} ease-in-out infinite}
-        .${k}-o2{animation:${k}-o2 ${s(22)} ease-in-out infinite, ${k}-morph ${s(17)} ease-in-out infinite reverse}
-        .${k}-o3{animation:${k}-o3 ${s(15)} ease-in-out infinite, ${k}-morph ${s(11)} ease-in-out infinite}
-        .${k}-o4{animation:${k}-o2 ${s(26)} ease-in-out infinite reverse, ${k}-morph ${s(19)} ease-in-out infinite}
-        .${k}-sheen{animation:${k}-spin ${s(12)} linear infinite}
-        .${k}-halo{animation:${k}-halo 6s ease-in-out infinite}
-        .${k}-float{animation:${k}-float 7s ease-in-out infinite}
-        .${k}-sun{animation:${k}-sun 4.5s ease-in-out infinite}
-        .${k}-cl{animation:${k}-cloud ${s(24)} linear infinite}
-        .${k}-rn{animation:${k}-rain .55s linear infinite}
-        .${k}-tw{animation:${k}-tw 3s ease-in-out infinite}
-        @media (prefers-reduced-motion: reduce) { [class^="${k}-"] { animation: none !important } }
-    `
-    const full = { position: "absolute" as const, inset: 0, borderRadius: "50%" }
-    const mancha = (col: string, size: string, x: string, y: string, cls: string, op = 0.95) => (
-        <div className={cls} style={{ position: "absolute", left: x, top: y, width: size, height: size, background: `radial-gradient(circle at 40% 40%, ${col}, ${rgba(col, 0)} 70%)`, filter: "blur(14px)", opacity: op, mixBlendMode: "normal" }} />
-    )
-    const grano = `url("data:image/svg+xml;utf8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .55 0'/></filter><rect width='100%' height='100%' filter='url(#n)'/></svg>")}")`
-    return (
-        <div className={`${k}-float`} style={{ position: "relative", width: "100%", height: "100%" }}>
-            <style>{css}</style>
-            {/* 1. halo */}
-            <div className={`${k}-halo`} style={{ ...full, inset: "-6%", background: `radial-gradient(closest-side, ${rgba(c1, 0.55)}, ${rgba(c2, 0.22)} 55%, transparent 78%)`, filter: "blur(18px)" }} />
-            {/* halo de colores: un anillo arcoíris que gira despacio, muy difuminado */}
-            <div className={`${k}-sheen`} style={{ ...full, inset: "1%", animationDuration: "40s", background: "conic-gradient(from 90deg, #ff5f6d, #ffc371, #f9f871, #5fffd0, #5fb8ff, #9a6bff, #ff5fd1, #ff5f6d)", WebkitMaskImage: "radial-gradient(circle, transparent 60%, #000 70%, transparent 86%)", maskImage: "radial-gradient(circle, transparent 60%, #000 70%, transparent 86%)", filter: "blur(12px)", opacity: 0.7 }} />
-            {/* 2. el líquido */}
-            <div style={{ ...full, inset: "10%", overflow: "hidden", filter: blur > 0 ? `blur(${blur}px)` : undefined, background: `radial-gradient(circle at 35% 30%, ${c1} 0%, ${base} 45%, ${deep} 100%)`, WebkitMaskImage: "radial-gradient(circle, #000 66%, rgba(0,0,0,.85) 70%, transparent 72%)", maskImage: "radial-gradient(circle, #000 66%, rgba(0,0,0,.85) 70%, transparent 72%)" }}>
-                {mancha(c2, "70%", "-5%", "-8%", `${k}-o1`)}
-                {mancha(c3, "75%", "35%", "30%", `${k}-o2`)}
-                {mancha(c4, "55%", "10%", "50%", `${k}-o3`, 0.8)}
-                {mancha(c1, "50%", "45%", "-5%", `${k}-o4`, 0.85)}
-                {/* 3. brillo que gira y grano */}
-                <div className={`${k}-sheen`} style={{ ...full, inset: "-25%", background: `conic-gradient(from 0deg, transparent 0deg, ${rgba("#ffffff", 0.22)} 40deg, transparent 90deg, transparent 200deg, ${rgba("#ffffff", 0.12)} 250deg, transparent 300deg)`, filter: "blur(14px)", mixBlendMode: "overlay" }} />
-                <div style={{ ...full, backgroundImage: grano, backgroundSize: "140px 140px", opacity: 0.22, mixBlendMode: "overlay" }} />
-                {/* 4. el tiempo de ahora */}
-                {sky === "sol" && <div className={`${k}-sun`} style={{ position: "absolute", left: "14%", top: "10%", width: "52%", height: "52%", borderRadius: "50%", background: "radial-gradient(closest-side, rgba(255,252,235,.95), rgba(255,226,160,.35) 55%, rgba(255,220,150,0))", filter: "blur(2px)" }} />}
-                {cloud > 0.25 && (
-                    <div className={`${k}-cl`} style={{ position: "absolute", inset: "-10% -60%", opacity: Math.min(0.9, 0.25 + cloud * 0.65) }}>
-                        {[
-                            [20, 28, 34, 22], [40, 18, 30, 20], [55, 52, 36, 24], [30, 62, 28, 18], [70, 34, 26, 18],
-                        ].map(([x, y, w, h], i) => (
-                            <span key={i} style={{ position: "absolute", left: `${x}%`, top: `${y}%`, width: `${w}%`, height: `${h}%`, borderRadius: "50%", background: `radial-gradient(closest-side, ${sky === "lluvia" ? "rgba(170,180,200,.95)" : "rgba(246,248,252,.95)"}, transparent)`, filter: "blur(8px)" }} />
-                        ))}
-                    </div>
-                )}
-                {sky === "lluvia" && (
-                    <div className={`${k}-rn`} style={{ ...full, backgroundImage: "repeating-linear-gradient(105deg, rgba(225,238,255,.7) 0 1.2px, transparent 1.2px 11px)", backgroundSize: "60px 160px", WebkitMaskImage: "repeating-linear-gradient(180deg, #000 0 12px, transparent 12px 22px)", maskImage: "repeating-linear-gradient(180deg, #000 0 12px, transparent 12px 22px)", opacity: 0.8 }} />
-                )}
-                {night &&
-                    Array.from({ length: 22 }, (_, i) => (
-                        <span key={i} className={`${k}-tw`} style={{ position: "absolute", left: `${10 + ((i * 37) % 80)}%`, top: `${8 + ((i * 53) % 78)}%`, width: i % 5 ? 2 : 3, height: i % 5 ? 2 : 3, borderRadius: 2, background: "#fff", boxShadow: "0 0 4px #fff", animationDelay: `${(i % 7) * 0.45}s` }} />
-                    ))}
-                {/* 5. reflejo y borde de luz */}
-                <div style={{ position: "absolute", left: "16%", top: "9%", width: "42%", height: "26%", borderRadius: "50%", background: "radial-gradient(closest-side, rgba(255,255,255,.55), rgba(255,255,255,0))", filter: "blur(6px)", transform: "rotate(-24deg)" }} />
-                <div style={{ ...full, boxShadow: `inset 0 0 0 1px ${rgba("#ffffff", 0.18)}, inset 0 -18px 40px ${rgba(deep, 0.55)}, inset 0 10px 30px ${rgba("#ffffff", 0.18)}` }} />
-            </div>
-        </div>
-    )
+function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur, uid }: { color: string; sky: Sky; cloud: number; wind: number; dir: number | null; temp: number; dark: boolean; ink: string; nubesBlur: number; uid: string }) {
+    const ref = useRef<HTMLCanvasElement>(null)
+    const cfg = useRef({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur })
+    cfg.current = { color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur }
+    useEffect(() => {
+        const cv = ref.current
+        if (!cv) return
+        const ctx = cv.getContext("2d")
+        if (!ctx) return
+        const quieto = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches
+        let W = 0, H = 0, dpr = 1
+        const tam = () => {
+            const r = cv.getBoundingClientRect()
+            dpr = Math.min(2, (typeof devicePixelRatio !== "undefined" && devicePixelRatio) || 1)
+            W = Math.max(1, r.width); H = Math.max(1, r.height)
+            cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr)
+        }
+        tam()
+        const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(tam) : null
+        ro?.observe(cv)
+        const rnd = Math.random
+        // hilos de viento, nubes, gotas, estrellas y chispas de calor
+        const hilos = Array.from({ length: 70 }, () => ({ x: rnd(), y: rnd(), v: 0.6 + rnd() * 0.8, l: 0.5 + rnd(), a: rnd(), w: rnd() * Math.PI * 2 }))
+        const nubes = Array.from({ length: 9 }, (_, i) => ({ x: rnd(), y: 0.05 + rnd() * 0.55, r: 0.16 + rnd() * 0.18, v: 0.5 + rnd() * 0.7, k: i }))
+        const gotas = Array.from({ length: 110 }, () => ({ x: rnd(), y: rnd(), v: 0.8 + rnd() * 0.6, l: 0.6 + rnd() * 0.6 }))
+        const estrellas = Array.from({ length: 40 }, () => ({ x: rnd(), y: rnd() * 0.8, s: 0.6 + rnd() * 1.2, f: rnd() * 6 }))
+        const chispas = Array.from({ length: 34 }, () => ({ x: rnd(), y: rnd(), v: 0.3 + rnd() * 0.7, s: 1 + rnd() * 2.2, f: rnd() * 6 }))
+        const col = (c: string, a: number) => { const [r, g, b] = hexRgb(c); return `rgba(${r},${g},${b},${a})` }
+        let t0 = performance.now(), raf = 0, tt = 0
+        const frame = (now: number) => {
+            const dt = Math.min(0.05, (now - t0) / 1000); t0 = now; tt += dt
+            const c = cfg.current
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+            ctx.clearRect(0, 0, W, H)
+            // dirección hacia donde va el viento (el dato dice de dónde viene)
+            const d = ((c.dir ?? 270) * Math.PI) / 180
+            const ux = -Math.sin(d), uy = Math.cos(d)
+            const fuerza = Math.min(1, c.wind / 50) // 0 calma … 1 temporal
+            const vel = 18 + fuerza * 160 // px/s
+            // 1. el color de la temperatura: un resplandor grande que respira a la derecha
+            const resp = 1 + 0.04 * Math.sin(tt * 0.6)
+            const g = ctx.createRadialGradient(W * 0.8, H * 0.25, 0, W * 0.8, H * 0.25, Math.max(W, H) * 0.75 * resp)
+            const calor = Math.max(0, Math.min(1, (c.temp - 22) / 14))
+            g.addColorStop(0, col(c.color, c.dark ? 0.55 : 0.5))
+            g.addColorStop(0.45, col(calor > 0 ? mix(c.color, "#ff3d2e", calor * 0.5) : c.color, c.dark ? 0.2 : 0.18))
+            g.addColorStop(1, col(c.color, 0))
+            ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+            // 2. sol o estrellas
+            if (c.sky === "sol") {
+                const p = 0.85 + 0.15 * Math.sin(tt * 1.2)
+                const s = ctx.createRadialGradient(W * 0.82, H * 0.2, 0, W * 0.82, H * 0.2, Math.min(W, H) * 0.55 * p)
+                s.addColorStop(0, `rgba(255,248,225,${c.dark ? 0.5 : 0.75})`); s.addColorStop(0.4, "rgba(255,214,140,.25)"); s.addColorStop(1, "rgba(255,214,140,0)")
+                ctx.fillStyle = s; ctx.fillRect(0, 0, W, H)
+            }
+            if (c.sky === "noche" || (c.dark && c.cloud < 0.6 && c.sky !== "lluvia")) {
+                for (const e of estrellas) {
+                    const a = (0.35 + 0.65 * (0.5 + 0.5 * Math.sin(tt * 1.6 + e.f))) * (1 - c.cloud * 0.8)
+                    ctx.fillStyle = c.dark ? `rgba(255,255,255,${a})` : col(c.ink, a * 0.35)
+                    ctx.beginPath(); ctx.arc(e.x * W, e.y * H, e.s, 0, Math.PI * 2); ctx.fill()
+                }
+            }
+            // 3. calor: chispas cálidas que suben despacio (desde 26°)
+            if (c.temp >= 26) {
+                const k = Math.min(1, (c.temp - 26) / 10)
+                for (const p of chispas) {
+                    p.y -= (p.v * 22 * dt) / H; p.x += (Math.sin(tt * 1.3 + p.f) * 8 * dt) / W
+                    if (p.y < -0.05) { p.y = 1.05; p.x = rnd() }
+                    const a = k * 0.7 * Math.min(1, p.y * 2)
+                    const s = ctx.createRadialGradient(p.x * W, p.y * H, 0, p.x * W, p.y * H, p.s * 3)
+                    s.addColorStop(0, `rgba(255,${Math.round(170 - 80 * k)},70,${a})`); s.addColorStop(1, "rgba(255,120,60,0)")
+                    ctx.fillStyle = s; ctx.fillRect(p.x * W - p.s * 3, p.y * H - p.s * 3, p.s * 6, p.s * 6)
+                }
+            }
+            // 4. nubes: tantas como nubosidad, grises si llueve, empujadas por el viento
+            const nN = Math.round(c.cloud * nubes.length)
+            ctx.filter = c.nubesBlur > 0 ? `blur(${c.nubesBlur}px)` : "none"
+            for (let i = 0; i < nN; i++) {
+                const n = nubes[i]
+                n.x += (ux * (8 + vel * 0.25) * n.v * dt) / W
+                n.y += (uy * (3 + vel * 0.06) * n.v * dt) / H
+                if (n.x > 1.4) n.x = -0.4; if (n.x < -0.4) n.x = 1.4
+                if (n.y > 0.85) n.y = -0.15; if (n.y < -0.15) n.y = 0.85
+                const R = n.r * Math.max(W, 260)
+                const tono = c.sky === "lluvia" ? (c.dark ? "#6b7488" : "#9aa3b5") : c.dark ? "#c9cfdc" : "#ffffff"
+                const a = c.sky === "lluvia" ? 0.75 : c.dark ? 0.35 : 0.85
+                for (const [dx, dy, rr] of [[0, 0, 1], [-0.55, 0.15, 0.7], [0.55, 0.12, 0.75], [0.15, -0.3, 0.6]]) {
+                    const cx = n.x * W + dx * R, cy = n.y * H + dy * R * 0.6
+                    const s = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * rr)
+                    s.addColorStop(0, col(tono, a)); s.addColorStop(0.6, col(tono, a * 0.5)); s.addColorStop(1, col(tono, 0))
+                    ctx.fillStyle = s; ctx.fillRect(cx - R * rr, cy - R * rr, R * rr * 2, R * rr * 2)
+                }
+            }
+            ctx.filter = "none"
+            // 5. lluvia: gotas que caen inclinadas por el viento
+            if (c.sky === "lluvia") {
+                const nieve = c.temp <= 1
+                ctx.strokeStyle = nieve ? "rgba(255,255,255,.9)" : c.dark ? "rgba(190,215,255,.55)" : "rgba(60,100,190,.45)"
+                ctx.fillStyle = "rgba(255,255,255,.9)"
+                ctx.lineWidth = 1; ctx.lineCap = "round"
+                const sx = ux * (0.15 + fuerza * 0.6)
+                for (const p of gotas) {
+                    const vy = nieve ? 40 * p.v : 380 * p.v
+                    p.y += (vy * dt) / H; p.x += (sx * vy * dt) / W + (nieve ? Math.sin(tt + p.l * 9) * 10 * dt / W : 0)
+                    if (p.y > 1.05) { p.y = -0.05; p.x = rnd() * 1.4 - 0.2 }
+                    if (nieve) { ctx.beginPath(); ctx.arc(p.x * W, p.y * H, 1.2 + p.l, 0, Math.PI * 2); ctx.fill(); continue }
+                    const L = 9 * p.l
+                    ctx.beginPath(); ctx.moveTo(p.x * W, p.y * H); ctx.lineTo(p.x * W - sx * L, p.y * H - L); ctx.stroke()
+                }
+            }
+            // 6. viento: hilos finos con estela que corren en la dirección del viento y ondulan un poco
+            const nH = Math.round(14 + fuerza * 56)
+            ctx.lineCap = "round"
+            for (let i = 0; i < nH; i++) {
+                const h = hilos[i]
+                const ond = Math.sin(tt * 2 + h.w) * 0.25
+                const vx = ux - uy * ond, vy = uy + ux * ond
+                h.x += (vx * vel * h.v * dt) / W; h.y += (vy * vel * h.v * dt) / H
+                h.a += dt * 0.5
+                if (h.x < -0.1 || h.x > 1.1 || h.y < -0.1 || h.y > 1.1) {
+                    // vuelve a entrar por el lado de donde sopla
+                    if (Math.abs(ux) > Math.abs(uy)) { h.x = ux > 0 ? -0.05 : 1.05; h.y = rnd() } else { h.y = uy > 0 ? -0.05 : 1.05; h.x = rnd() }
+                    h.a = 0
+                }
+                const L = (12 + fuerza * 50) * h.l
+                const vida = Math.min(1, h.a * 2)
+                const x = h.x * W, y = h.y * H
+                const gr = ctx.createLinearGradient(x, y, x - vx * L, y - vy * L)
+                const base = c.dark ? "#ffffff" : mix(c.ink, c.color, 0.35)
+                gr.addColorStop(0, col(base, (c.dark ? 0.55 : 0.4) * vida)); gr.addColorStop(1, col(base, 0))
+                ctx.strokeStyle = gr; ctx.lineWidth = 0.8 + h.l * 0.6
+                ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - vx * L, y - vy * L); ctx.stroke()
+            }
+            if (!quieto) raf = requestAnimationFrame(frame)
+        }
+        raf = requestAnimationFrame(frame)
+        return () => { cancelAnimationFrame(raf); ro?.disconnect() }
+    }, [])
+    return <canvas ref={ref} data-cielo={uid} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }} />
 }
 
 /** Número que sube hasta su valor al aparecer (escribe el texto directamente, sin re-pintar React) */
@@ -1184,7 +1211,7 @@ export function useTiempo(props: Partial<Props>) {
         @keyframes ${uid}-drift { 0%,100% { transform: translateY(-3px) } 50% { transform: translateY(3px) } }
         @keyframes ${uid}-pulse { 0% { transform: scale(1); opacity: .55 } 100% { transform: scale(2.6); opacity: 0 } }
         @keyframes ${uid}-in { from { opacity: 0; transform: translateY(14px); filter: blur(8px) } to { opacity: 1; transform: none; filter: blur(0) } }
-        @keyframes ${uid}-orbin { from { opacity: 0; transform: scale(.82) rotate(-12deg) } to { opacity: 1; transform: none } }
+        @keyframes ${uid}-orbin { from { opacity: 0 } to { opacity: 1 } }
         @keyframes ${uid}-reveal { from { clip-path: inset(0 0 100% 0) } to { clip-path: inset(0 0 0 0) } }
         @keyframes ${uid}-draw { from { stroke-dashoffset: 1 } to { stroke-dashoffset: 0 } }
         @keyframes ${uid}-spinK { to { transform: rotate(360deg) } }
@@ -1243,9 +1270,9 @@ export function SeccionAhora({ v }: { v: Vista }) {
     const [iaOpen, setIaOpen] = useState(false)
     return (
         <>
-            <div style={{ position: "relative", padding: "20px 20px 4px", overflow: "hidden" }}>
-                    <div aria-hidden className={`${uid}-orb`} style={{ position: "absolute", right: -W * 0.22, top: -W * 0.08, width: W * 0.9, height: W * 0.9, pointerEvents: "none" }}>
-                        <Esfera color={nowCol} sky={sky} cloud={cloudNow} windK={Math.min(1, (now.wind ?? 0) / 40)} blur={sphereBlur} uid={uid} />
+            <div style={{ position: "relative", padding: "20px 20px 4px", overflow: "hidden", minHeight: 200 }}>
+                    <div aria-hidden className={`${uid}-orb`} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+                        <Cielo color={nowCol} sky={sky} cloud={cloudNow} wind={now.wind ?? 0} dir={now.dir} temp={now.temp} dark={dark} ink={inkColor} nubesBlur={sphereBlur} uid={uid} />
                     </div>
                     {/* botón sol / luna para cambiar entre modo claro y oscuro */}
                     <button
