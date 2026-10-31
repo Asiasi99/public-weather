@@ -3,11 +3,11 @@
  * (la media de los 8 modelos cada 25 km), con una barra para mover la hora.
  *
  * Datos: mapa/index.json (los puntos), mapa/<paso>.json (uno cada 3 h) y mapa/contornos.json (Natural Earth).
- * Al tocar el mapa se elige la ciudad con datos más cercana y cambia toda la página (como el buscador).
+ * Es solo para mirar: tocarlo no cambia la ciudad de la página.
  */
 import { addPropertyControls, ControlType } from "framer"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { BASE, cityBus, MONO, mix, rgba, SANS, scale, setIdioma, t, uR, uRL, uT, useAjustesWeb, useTema, uV, uVL } from "./TiempoNucleo.tsx"
+import { BASE, MONO, mix, rgba, SANS, scale, setIdioma, t, uR, uRL, uT, useAjustesWeb, useTema, uV, uVL } from "./TiempoNucleo.tsx"
 
 type Indice = { res: number; lat: number[]; lon: number[]; steps: string[] }
 type Paso = { t: string; temp: (number | null)[]; rain: (number | null)[]; wind: (number | null)[]; dir: (number | null)[] }
@@ -57,6 +57,7 @@ type Props = {
     rainColor: string
     blur: number
     soloTierra: boolean
+    bordes: boolean
     radius: number
     baseUrl: string
 }
@@ -79,6 +80,7 @@ export default function TiempoMapa(props: Partial<Props>) {
         rainColor = "#3d6bff",
         blur = 1,
         soloTierra = true,
+        bordes = false,
         radius = 0,
         baseUrl = BASE,
     } = props
@@ -104,7 +106,6 @@ export default function TiempoMapa(props: Partial<Props>) {
     const [W, setW] = useState(390)
     const [idx, setIdx] = useState<Indice | null>(null)
     const [cont, setCont] = useState<{ lines: number[][] } | null>(null)
-    const [cities, setCities] = useState<CityInfo[]>([])
     const [paso, setPaso] = useState<Paso | null>(null)
     const [k, setK] = useState(0)
     const [capa, setCapa] = useState<Capa>(capaInicial)
@@ -135,7 +136,6 @@ export default function TiempoMapa(props: Partial<Props>) {
             })
             .catch(() => setErr(true))
         get<{ lines: number[][] }>(`${baseUrl}/mapa/contornos.json`).then(setCont).catch(() => undefined)
-        get<{ cities: CityInfo[] }>(`${baseUrl}/index.json`).then((j) => setCities(j.cities)).catch(() => undefined)
     }, [baseUrl])
     useEffect(() => {
         if (!idx) return
@@ -173,19 +173,21 @@ export default function TiempoMapa(props: Partial<Props>) {
         if (!ctx) return
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         ctx.clearRect(0, 0, W, H)
-        // 1) las celdas en un lienzo aparte, para difuminarlas de una vez
-        const off = document.createElement("canvas")
-        off.width = cv.width
-        off.height = cv.height
-        const o = off.getContext("2d")!
-        o.setTransform(dpr, 0, 0, dpr, 0, 0)
+        // 1) Un píxel por punto de la rejilla en un lienzo pequeño; al estirarlo, el navegador mezcla los colores
+        //    entre puntos (sin cuadrados ni malla) y luego se suaviza un poco más con un difuminado
         const r = idx.res
-        const cw = r * kx + 1,
-            ch = r * ky + 1
+        const nx = Math.round((lo1 - lo0) / r) + 4,
+            ny = Math.round((la1 - la0) / r) + 4
+        const gx = (lon: number) => Math.round((lon - lo0) / r) + 2,
+            gy = (lat: number) => Math.round((la1 - lat) / r) + 2
+        const rgbaArr = new Float32Array(nx * ny * 4)
+        const has = new Uint8Array(nx * ny)
         for (let i = 0; i < idx.lat.length; i++) {
             const lat = idx.lat[i] / 100,
                 lon = idx.lon[i] / 100
-            if (lon < lo0 - r || lon > lo1 + r || lat < la0 - r || lat > la1 + r) continue
+            const x = gx(lon),
+                y = gy(lat)
+            if (x < 0 || y < 0 || x >= nx || y >= ny) continue
             let col = "",
                 a = 0
             if (capa === "temp") {
@@ -195,18 +197,65 @@ export default function TiempoMapa(props: Partial<Props>) {
                 a = 0.92
             } else if (capa === "lluvia") {
                 const v = paso.rain[i]
-                if (v == null || v < 1) continue
+                if (v == null) continue
                 col = rainColor
-                a = Math.min(0.95, 0.25 + Math.sqrt(v / 10 / 6))
+                a = v < 1 ? 0 : Math.min(0.95, 0.25 + Math.sqrt(v / 10 / 6))
             } else {
                 const v = paso.wind[i]
                 if (v == null) continue
                 col = scale(VIENTO, v)
                 a = 0.88
             }
-            o.fillStyle = rgba(col, a)
-            o.fillRect(px(lon) - cw / 2, py(lat) - ch / 2, cw, ch)
+            const [cr, cg, cb] = col.startsWith("#") ? [parseInt(col.slice(1, 3), 16), parseInt(col.slice(3, 5), 16), parseInt(col.slice(5, 7), 16)] : [0, 0, 0]
+            const q = (y * nx + x) * 4
+            rgbaArr[q] = cr
+            rgbaArr[q + 1] = cg
+            rgbaArr[q + 2] = cb
+            rgbaArr[q + 3] = a
+            has[y * nx + x] = 1
         }
+        // Rellenar los huecos con la media de los vecinos (dos pasadas): así no aparecen bordes oscuros
+        for (let pass = 0; pass < 2; pass++) {
+            const add: [number, number, number, number, number][] = []
+            for (let y = 0; y < ny; y++)
+                for (let x = 0; x < nx; x++) {
+                    if (has[y * nx + x]) continue
+                    let n = 0,
+                        sr = 0,
+                        sg = 0,
+                        sb = 0,
+                        sa = 0
+                    for (let dy = -1; dy <= 1; dy++)
+                        for (let dx = -1; dx <= 1; dx++) {
+                            const xx = x + dx,
+                                yy = y + dy
+                            if (xx < 0 || yy < 0 || xx >= nx || yy >= ny || !has[yy * nx + xx]) continue
+                            const q = (yy * nx + xx) * 4
+                            sr += rgbaArr[q]
+                            sg += rgbaArr[q + 1]
+                            sb += rgbaArr[q + 2]
+                            sa += rgbaArr[q + 3]
+                            n++
+                        }
+                    if (n) add.push([y * nx + x, sr / n, sg / n, sb / n, sa / n])
+                }
+            for (const [p, a1, a2, a3, a4] of add) {
+                rgbaArr.set([a1, a2, a3, a4], p * 4)
+                has[p] = 1
+            }
+        }
+        const small = document.createElement("canvas")
+        small.width = nx
+        small.height = ny
+        const sctx = small.getContext("2d")!
+        const img = sctx.createImageData(nx, ny)
+        for (let p = 0; p < nx * ny; p++) {
+            img.data[p * 4] = rgbaArr[p * 4]
+            img.data[p * 4 + 1] = rgbaArr[p * 4 + 1]
+            img.data[p * 4 + 2] = rgbaArr[p * 4 + 2]
+            img.data[p * 4 + 3] = has[p] ? Math.round(rgbaArr[p * 4 + 3] * 255) : 0
+        }
+        sctx.putImageData(img, 0, 0)
         ctx.save()
         // Solo sobre tierra: se recorta con los países (los anillos cerrados de los contornos)
         if (soloTierra && cont) {
@@ -223,11 +272,14 @@ export default function TiempoMapa(props: Partial<Props>) {
             }
             ctx.clip(tierra)
         }
-        ctx.filter = `blur(${Math.max(1, (r * kx) / 2.2) * blur}px)`
-        ctx.drawImage(off, 0, 0, W, H)
+        ctx.imageSmoothingEnabled = true
+        ctx.imageSmoothingQuality = "high"
+        ctx.filter = blur > 0 ? `blur(${((r * kx) / 3) * blur}px)` : "none"
+        // Cada píxel del lienzo pequeño, centrado en su punto de la rejilla
+        ctx.drawImage(small, px(lo0 - 2.5 * r), py(la1 + 2.5 * r), nx * r * kx, ny * r * ky)
         ctx.restore()
-        // 2) contornos
-        if (cont) {
+        // 2) contornos (apagados por defecto: control «Bordes»)
+        if (bordes && cont) {
             ctx.beginPath()
             for (const l of cont.lines) {
                 for (let j = 0; j < l.length; j += 2) {
@@ -237,8 +289,8 @@ export default function TiempoMapa(props: Partial<Props>) {
                     else ctx.moveTo(x, y)
                 }
             }
-            ctx.strokeStyle = rgba(ink, dark ? 0.55 : 0.6)
-            ctx.lineWidth = 0.8
+            ctx.strokeStyle = rgba(ink, dark ? 0.35 : 0.3)
+            ctx.lineWidth = 0.6
             ctx.lineJoin = "round"
             ctx.stroke()
         }
@@ -268,7 +320,7 @@ export default function TiempoMapa(props: Partial<Props>) {
                 ctx.restore()
             }
         }
-    }, [idx, paso, cont, capa, zona, W, H, dark, blur, tempCold, tempMild, tempWarm, tempHot, rainColor, soloTierra])
+    }, [idx, paso, cont, capa, zona, W, H, dark, blur, tempCold, tempMild, tempWarm, tempHot, rainColor, soloTierra, bordes])
 
     const valorEn = (lat: number, lon: number) => {
         if (!idx || !paso) return null
@@ -287,27 +339,6 @@ export default function TiempoMapa(props: Partial<Props>) {
         return paso.wind[best] == null ? null : String(uV(paso.wind[best]!))
     }
     const etiquetas = useMemo(() => CIUDADES.filter(([, la, lo]) => lo >= lo0 && lo <= lo1 && la >= la0 && la <= la1), [zona])
-
-    // Tocar el mapa: la ciudad con datos más cercana pasa a ser la de toda la página
-    const tocar = (x: number, y: number) => {
-        if (!cities.length) return
-        const lon = lo0 + x / kx,
-            lat = la1 - y / ky
-        let best: CityInfo | null = null,
-            bd = Infinity
-        for (const c of cities) {
-            const d = (c.lat - lat) ** 2 + ((c.lon - lon) * Math.cos((lat * Math.PI) / 180)) ** 2
-            if (d < bd) {
-                bd = d
-                best = c
-            }
-        }
-        if (!best || bd > 1.2) return
-        const bus = cityBus()
-        bus.city = best.id
-        bus.place = null
-        bus.subs.forEach((f) => f())
-    }
 
     const fmtPaso = (s: string) =>
         new Intl.DateTimeFormat(t("es-ES", "en-GB"), { timeZone: "Europe/Madrid", weekday: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(s)).replace(".", "")
@@ -345,10 +376,7 @@ export default function TiempoMapa(props: Partial<Props>) {
             {err ? (
                 <div style={{ padding: 20, fontSize: 13, color: soft }}>{t("No se pudo cargar el mapa.", "Couldn't load the map.")}</div>
             ) : (
-                <div style={{ position: "relative", width: W, height: H, cursor: "crosshair" }} onClick={(e: any) => {
-                    const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
-                    tocar(e.clientX - r.left, e.clientY - r.top)
-                }}>
+                <div style={{ position: "relative", width: W, height: H }}>
                     <canvas ref={canvas} style={{ width: W, height: H, display: "block" }} />
                     {etiquetas.map(([n, la, lo]) => {
                         const v = valorEn(la, lo)
@@ -385,7 +413,7 @@ export default function TiempoMapa(props: Partial<Props>) {
                             <span style={{ flex: 1, textAlign: "right", fontWeight: 500, fontSize: 15, textTransform: "capitalize" }}>{fmtPaso(idx.steps[k])}</span>
                         </div>
                         <input type="range" min={0} max={idx.steps.length - 1} value={k} onChange={(e: any) => setK(Number(e.target.value))} style={{ width: "100%", marginTop: 10, accentColor: ink }} aria-label={t("Hora", "Time")} />
-                        <div style={{ fontSize: 12, color: soft, marginTop: 4 }}>{t("Toca el mapa para ver la ciudad más cercana. Media de 8 modelos cada 25 km.", "Tap the map to see the nearest city. Average of 8 models every 25 km.")}</div>
+                        <div style={{ fontSize: 12, color: soft, marginTop: 4 }}>{t("Media de 8 modelos cada 25 km.", "Average of 8 models every 25 km.")}</div>
                     </>
                 )}
             </div>
@@ -405,6 +433,7 @@ addPropertyControls(TiempoMapa, {
     rainColor: { type: ControlType.Color, title: "Lluvia", defaultValue: "#3d6bff" },
     blur: { type: ControlType.Number, title: "Difuminado", min: 0, max: 3, step: 0.1, defaultValue: 1 },
     soloTierra: { type: ControlType.Boolean, title: "Solo tierra", defaultValue: true },
+    bordes: { type: ControlType.Boolean, title: "Bordes", defaultValue: false },
     radius: { type: ControlType.Number, title: "Esquinas", min: 0, max: 40, defaultValue: 0 },
     baseUrl: { type: ControlType.String, title: "URL de datos", defaultValue: BASE },
 })
