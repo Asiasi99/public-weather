@@ -17,7 +17,7 @@ export const SANS = "Satoshi, Geist, 'Inter Tight', system-ui, sans-serif"
 // ---------------- Idioma (español o inglés) ----------------
 // «auto» sigue al navegador. Cada texto lleva sus dos idiomas en el mismo sitio: t("Lluvia", "Rain").
 let IDI: "es" | "en" = "es"
-function setIdioma(i: "auto" | "es" | "en") {
+export function setIdioma(i: "auto" | "es" | "en") {
     IDI = i === "auto" ? (typeof navigator !== "undefined" && !/^es/i.test(navigator.language || "es") ? "en" : "es") : i
 }
 export const t = (es: string, en: string) => (IDI === "en" ? en : es)
@@ -26,7 +26,7 @@ const dec1 = (v: number) => (IDI === "en" ? v.toFixed(1) : v.toFixed(1).replace(
 
 // ---------------- Ciudad global (compartida con los demás componentes) ----------------
 type CityBus = { city: string; place?: unknown; subs: Set<() => void> }
-function cityBus(): CityBus {
+export function cityBus(): CityBus {
     const g = globalThis as unknown as { __tiempoCiudad?: CityBus }
     if (!g.__tiempoCiudad) g.__tiempoCiudad = { city: "madrid", place: null, subs: new Set() }
     return g.__tiempoCiudad
@@ -266,13 +266,13 @@ function hexRgb(c: string): number[] {
     const m = v.match(/rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i)
     return m ? [m[1], m[2], m[3]].map((n) => Math.round(Number(n))) : [128, 128, 128]
 }
-const mix = (a: string, b: string, k: number) => {
+export const mix = (a: string, b: string, k: number) => {
     const A = hexRgb(a),
         B = hexRgb(b)
     return `#${A.map((v, i) => Math.round(v + (B[i] - v) * Math.min(1, Math.max(0, k))).toString(16).padStart(2, "0")).join("")}`
 }
-const rgba = (c: string, a: number) => `rgba(${hexRgb(c).join(",")},${a.toFixed(3)})`
-function scale(stops: [number, string][], v: number) {
+export const rgba = (c: string, a: number) => `rgba(${hexRgb(c).join(",")},${a.toFixed(3)})`
+export function scale(stops: [number, string][], v: number) {
     if (v <= stops[0][0]) return stops[0][1]
     for (let i = 1; i < stops.length; i++) if (v <= stops[i][0]) return mix(stops[i - 1][1], stops[i][1], (v - stops[i - 1][0]) / (stops[i][0] - stops[i - 1][0]))
     return stops[stops.length - 1][1]
@@ -715,7 +715,7 @@ function temaManual(): TemaManual {
     if (!g.__tiempoTemaManual) g.__tiempoTemaManual = { manual: readSaved(), mSubs: new Set() }
     return g.__tiempoTemaManual
 }
-function useTema(theme: Props["theme"]) {
+export function useTema(theme: Props["theme"]) {
     const [sysDark, setSysDark] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(prefers-color-scheme: dark)").matches)
     const [manual, setManual] = useState(() => temaManual().manual)
     useEffect(() => {
