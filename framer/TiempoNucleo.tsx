@@ -627,57 +627,97 @@ const shift = (hex: string, dh: number, dl = 0, sat = 1) => {
     return fromHsl(h + dh, Math.min(1, s * sat), Math.max(0, Math.min(1, l + dl)))
 }
 type Sky = "sol" | "nubes" | "lluvia" | "noche"
-/** Bola con el color de la temperatura y el cielo dentro: brillo de sol, nubes, lluvia o estrellas; gira más rápido con viento */
+/**
+ * La esfera: un orbe de luz líquida con el color de la temperatura.
+ *
+ * Capas, de fondo a frente:
+ *   1. un halo que respira alrededor;
+ *   2. dentro del círculo, 4 manchas de color (tonos vecinos del de la temperatura) que se mueven y
+ *      cambian de forma muy despacio, difuminadas: parece un líquido que gira; con viento van más rápido;
+ *   3. un brillo cónico que gira (como la luz en una pompa) y el grano fino encima;
+ *   4. el tiempo de ahora: sol que late, nubes que pasan, lluvia que cae o estrellas que parpadean;
+ *   5. el reflejo de arriba a la izquierda y un borde de luz.
+ */
 function Esfera({ color, sky, cloud, windK, blur, uid }: { color: string; sky: Sky; cloud: number; windK: number; blur: number; uid: string }) {
     const night = sky === "noche"
     let base = color
-    if (cloud > 0.3) base = mix(base, "#9aa3b4", (cloud - 0.3) * 0.7)
-    if (sky === "lluvia") base = mix(base, "#3a64d8", 0.5)
-    if (night) base = shift(base, 0, -0.1, 0.9)
-    const core = shift(base, 0, night ? 0.06 : 0.12, 0.95),
-        h1 = shift(base, 18, 0.04, 0.95),
-        h2 = shift(base, -24, -0.04, 0.9),
-        deep = night ? "#1d2563" : shift(base, 8, -0.24, 0.85)
+    if (cloud > 0.4) base = mix(base, "#8f98ad", (cloud - 0.4) * 0.6)
+    if (sky === "lluvia") base = mix(base, "#3a64d8", 0.45)
+    if (night) base = shift(base, 0, -0.12, 0.85)
+    const c1 = shift(base, 0, 0.1, 1),
+        c2 = shift(base, 28, 0.02, 1),
+        c3 = shift(base, -32, -0.04, 0.95),
+        c4 = night ? "#2a2f7a" : shift(base, 60, 0.06, 0.9),
+        deep = night ? "#0f1446" : shift(base, 10, -0.26, 0.9)
+    const v = 1 - 0.65 * windK // más viento, todo más rápido
+    const s = (seg: number) => `${(seg * v).toFixed(1)}s`
+    const k = uid
+    const css = `
+        @keyframes ${k}-o1 { 0%{transform:translate(-8%,-6%) rotate(0deg)} 50%{transform:translate(10%,8%) rotate(180deg)} 100%{transform:translate(-8%,-6%) rotate(360deg)} }
+        @keyframes ${k}-o2 { 0%{transform:translate(10%,-10%) rotate(0deg)} 50%{transform:translate(-12%,6%) rotate(-180deg)} 100%{transform:translate(10%,-10%) rotate(-360deg)} }
+        @keyframes ${k}-o3 { 0%{transform:translate(0,12%) scale(1)} 50%{transform:translate(-6%,-12%) scale(1.15)} 100%{transform:translate(0,12%) scale(1)} }
+        @keyframes ${k}-morph { 0%,100%{border-radius:42% 58% 63% 37% / 41% 44% 56% 59%} 33%{border-radius:61% 39% 45% 55% / 52% 63% 37% 48%} 66%{border-radius:37% 63% 51% 49% / 60% 38% 62% 40%} }
+        @keyframes ${k}-spin { to { transform: rotate(360deg) } }
+        @keyframes ${k}-halo { 0%,100%{opacity:.55; transform:scale(.97)} 50%{opacity:.9; transform:scale(1.04)} }
+        @keyframes ${k}-float { 0%,100%{transform:translateY(-1.5%)} 50%{transform:translateY(1.5%)} }
+        @keyframes ${k}-sun { 0%,100%{opacity:.75; transform:scale(.95)} 50%{opacity:1; transform:scale(1.08)} }
+        @keyframes ${k}-cloud { from{transform:translateX(-60%)} to{transform:translateX(60%)} }
+        @keyframes ${k}-rain { from{background-position:0 0} to{background-position:-30px 160px} }
+        @keyframes ${k}-tw { 0%,100%{opacity:.15} 50%{opacity:1} }
+        .${k}-o1{animation:${k}-o1 ${s(18)} ease-in-out infinite, ${k}-morph ${s(14)} ease-in-out infinite}
+        .${k}-o2{animation:${k}-o2 ${s(22)} ease-in-out infinite, ${k}-morph ${s(17)} ease-in-out infinite reverse}
+        .${k}-o3{animation:${k}-o3 ${s(15)} ease-in-out infinite, ${k}-morph ${s(11)} ease-in-out infinite}
+        .${k}-o4{animation:${k}-o2 ${s(26)} ease-in-out infinite reverse, ${k}-morph ${s(19)} ease-in-out infinite}
+        .${k}-sheen{animation:${k}-spin ${s(12)} linear infinite}
+        .${k}-halo{animation:${k}-halo 6s ease-in-out infinite}
+        .${k}-float{animation:${k}-float 7s ease-in-out infinite}
+        .${k}-sun{animation:${k}-sun 4.5s ease-in-out infinite}
+        .${k}-cl{animation:${k}-cloud ${s(24)} linear infinite}
+        .${k}-rn{animation:${k}-rain .55s linear infinite}
+        .${k}-tw{animation:${k}-tw 3s ease-in-out infinite}
+        @media (prefers-reduced-motion: reduce) { [class^="${k}-"] { animation: none !important } }
+    `
     const full = { position: "absolute" as const, inset: 0, borderRadius: "50%" }
-    const spin = `${(30 - 24 * windK).toFixed(1)}s`
+    const mancha = (col: string, size: string, x: string, y: string, cls: string, op = 0.95) => (
+        <div className={cls} style={{ position: "absolute", left: x, top: y, width: size, height: size, background: `radial-gradient(circle at 40% 40%, ${col}, ${rgba(col, 0)} 70%)`, filter: `blur(${10 + blur * 2}px)`, opacity: op, mixBlendMode: "normal" }} />
+    )
+    const grano = `url("data:image/svg+xml;utf8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .55 0'/></filter><rect width='100%' height='100%' filter='url(#n)'/></svg>")}")`
     return (
-        <div className={`${uid}-sphere`} style={{ position: "relative", width: "100%", height: "100%" }}>
-            <div className={`${uid}-breath`} style={{ ...full, background: `radial-gradient(closest-side, ${rgba(h1, 0.6)}, ${rgba(h2, 0.28)} 55%, transparent 82%)` }} />
-            <div
-                style={{
-                    ...full,
-                    inset: "12%",
-                    overflow: "hidden",
-                    filter: blur > 0 ? `blur(${blur}px)` : undefined,
-                    WebkitMaskImage: "radial-gradient(circle, #000 50%, rgba(0,0,0,.6) 63%, transparent 71%)",
-                    maskImage: "radial-gradient(circle, #000 50%, rgba(0,0,0,.6) 63%, transparent 71%)",
-                    background: `radial-gradient(circle at 36% 30%, ${mix(core, "#ffffff", 0.35)} 0%, ${core} 22%, ${h1} 48%, ${h2} 74%, ${deep} 100%)`,
-                }}
-            >
-                <div className={`${uid}-spin`} style={{ ...full, inset: "-20%", animationDuration: spin, background: `conic-gradient(from 0deg, ${h1}, ${h2}, ${deep}, ${core}, ${h1})`, filter: "blur(22px)", opacity: 0.5, mixBlendMode: "overlay" }} />
-                <div className={`${uid}-spin`} style={{ ...full, inset: "-10%", animationDuration: "28s", animationDirection: "reverse", background: `radial-gradient(55% 45% at 72% 70%, ${rgba(h2, 0.87)}, transparent 70%), radial-gradient(45% 40% at 24% 72%, ${rgba(deep, 0.8)}, transparent 70%), radial-gradient(40% 35% at 66% 26%, ${rgba(h1, 0.8)}, transparent 70%)`, filter: "blur(12px)", opacity: 0.85 }} />
-                {windK > 0.15 && <div className={`${uid}-flow`} style={{ position: "absolute", top: 0, bottom: 0, left: 0, width: "200%", animationDuration: `${(9 - 7 * windK).toFixed(1)}s`, background: `repeating-linear-gradient(90deg, transparent 0 12%, ${rgba(mix(base, "#ffffff", 0.6), 0.33)} 18%, transparent 26%)`, filter: "blur(8px)", opacity: 0.4 + 0.5 * windK }} />}
-                {cloud > 0.2 && <div style={{ ...full, background: `radial-gradient(circle at 50% 40%, ${rgba("#eef1f7", Math.min(1, (cloud - 0.2) * 0.8) * 0.78)}, transparent 75%)` }} />}
-                {sky === "sol" && <div className={`${uid}-breath`} style={{ position: "absolute", left: "8%", top: "6%", width: "58%", height: "58%", borderRadius: "50%", background: "radial-gradient(closest-side, rgba(255,255,245,.85), rgba(255,240,210,0))" }} />}
-                {night && <div style={{ ...full, background: "radial-gradient(circle at 72% 78%, #141b4fdd 0%, #1d2563aa 35%, transparent 70%)" }} />}
-                {night &&
-                    Array.from({ length: 16 }, (_, i) => (
-                        <span key={i} className={`${uid}-tw`} style={{ position: "absolute", left: `${12 + ((i * 37) % 76)}%`, top: `${10 + ((i * 53) % 70)}%`, width: i % 4 ? 2 : 3, height: i % 4 ? 2 : 3, borderRadius: 2, background: "#fff", animationDelay: `${(i % 6) * 0.5}s` }} />
-                    ))}
-                {cloud > 0.15 && (
-                    <div className={`${uid}-sdrift`} style={{ position: "absolute", inset: "-10% -40%", opacity: Math.min(1, 0.2 + cloud * 0.7), animationDuration: `${(20 - 15 * windK).toFixed(1)}s` }}>
+        <div className={`${k}-float`} style={{ position: "relative", width: "100%", height: "100%" }}>
+            <style>{css}</style>
+            {/* 1. halo */}
+            <div className={`${k}-halo`} style={{ ...full, inset: "-6%", background: `radial-gradient(closest-side, ${rgba(c1, 0.55)}, ${rgba(c2, 0.22)} 55%, transparent 78%)`, filter: "blur(18px)" }} />
+            {/* 2. el líquido */}
+            <div style={{ ...full, inset: "10%", overflow: "hidden", background: `radial-gradient(circle at 35% 30%, ${c1} 0%, ${base} 45%, ${deep} 100%)`, WebkitMaskImage: "radial-gradient(circle, #000 66%, rgba(0,0,0,.85) 70%, transparent 72%)", maskImage: "radial-gradient(circle, #000 66%, rgba(0,0,0,.85) 70%, transparent 72%)" }}>
+                {mancha(c2, "70%", "-5%", "-8%", `${k}-o1`)}
+                {mancha(c3, "75%", "35%", "30%", `${k}-o2`)}
+                {mancha(c4, "55%", "10%", "50%", `${k}-o3`, 0.8)}
+                {mancha(c1, "50%", "45%", "-5%", `${k}-o4`, 0.85)}
+                {/* 3. brillo que gira y grano */}
+                <div className={`${k}-sheen`} style={{ ...full, inset: "-25%", background: `conic-gradient(from 0deg, transparent 0deg, ${rgba("#ffffff", 0.22)} 40deg, transparent 90deg, transparent 200deg, ${rgba("#ffffff", 0.12)} 250deg, transparent 300deg)`, filter: "blur(14px)", mixBlendMode: "overlay" }} />
+                <div style={{ ...full, backgroundImage: grano, backgroundSize: "140px 140px", opacity: 0.22, mixBlendMode: "overlay" }} />
+                {/* 4. el tiempo de ahora */}
+                {sky === "sol" && <div className={`${k}-sun`} style={{ position: "absolute", left: "14%", top: "10%", width: "52%", height: "52%", borderRadius: "50%", background: "radial-gradient(closest-side, rgba(255,252,235,.95), rgba(255,226,160,.35) 55%, rgba(255,220,150,0))", filter: "blur(2px)" }} />}
+                {cloud > 0.25 && (
+                    <div className={`${k}-cl`} style={{ position: "absolute", inset: "-10% -60%", opacity: Math.min(0.9, 0.25 + cloud * 0.65) }}>
                         {[
-                            [18, 26, 26, 24], [30, 20, 30, 28], [42, 28, 24, 22], [46, 50, 30, 26],
-                            [58, 44, 32, 30], [70, 52, 24, 22], [22, 64, 28, 22], [34, 60, 30, 26],
+                            [20, 28, 34, 22], [40, 18, 30, 20], [55, 52, 36, 24], [30, 62, 28, 18], [70, 34, 26, 18],
                         ].map(([x, y, w, h], i) => (
-                            <span key={i} style={{ position: "absolute", left: `${x}%`, top: `${y}%`, width: `${w}%`, height: `${h}%`, borderRadius: "50%", background: `radial-gradient(closest-side, ${sky === "lluvia" ? "#9aa5bd" : "#eef1f7"}, transparent)`, filter: "blur(7px)" }} />
+                            <span key={i} style={{ position: "absolute", left: `${x}%`, top: `${y}%`, width: `${w}%`, height: `${h}%`, borderRadius: "50%", background: `radial-gradient(closest-side, ${sky === "lluvia" ? "rgba(170,180,200,.95)" : "rgba(246,248,252,.95)"}, transparent)`, filter: "blur(8px)" }} />
                         ))}
                     </div>
                 )}
-                {sky === "lluvia" && <div className={`${uid}-srain`} style={{ position: "absolute", inset: "-30% -10%", backgroundImage: "repeating-linear-gradient(100deg, rgba(220,236,255,.65) 0 1.2px, transparent 1.2px 9px)", maskImage: "repeating-linear-gradient(180deg, #000 0 10px, transparent 10px 18px)", WebkitMaskImage: "repeating-linear-gradient(180deg, #000 0 10px, transparent 10px 18px)", filter: "blur(.6px)" }} />}
+                {sky === "lluvia" && (
+                    <div className={`${k}-rn`} style={{ ...full, backgroundImage: "repeating-linear-gradient(105deg, rgba(225,238,255,.7) 0 1.2px, transparent 1.2px 11px)", backgroundSize: "60px 160px", WebkitMaskImage: "repeating-linear-gradient(180deg, #000 0 12px, transparent 12px 22px)", maskImage: "repeating-linear-gradient(180deg, #000 0 12px, transparent 12px 22px)", opacity: 0.8 }} />
+                )}
+                {night &&
+                    Array.from({ length: 22 }, (_, i) => (
+                        <span key={i} className={`${k}-tw`} style={{ position: "absolute", left: `${10 + ((i * 37) % 80)}%`, top: `${8 + ((i * 53) % 78)}%`, width: i % 5 ? 2 : 3, height: i % 5 ? 2 : 3, borderRadius: 2, background: "#fff", boxShadow: "0 0 4px #fff", animationDelay: `${(i % 7) * 0.45}s` }} />
+                    ))}
+                {/* 5. reflejo y borde de luz */}
+                <div style={{ position: "absolute", left: "16%", top: "9%", width: "42%", height: "26%", borderRadius: "50%", background: "radial-gradient(closest-side, rgba(255,255,255,.55), rgba(255,255,255,0))", filter: "blur(6px)", transform: "rotate(-24deg)" }} />
+                <div style={{ ...full, boxShadow: `inset 0 0 0 1px ${rgba("#ffffff", 0.18)}, inset 0 -18px 40px ${rgba(deep, 0.55)}, inset 0 10px 30px ${rgba("#ffffff", 0.18)}` }} />
             </div>
-            {/* anillo de arcoíris que gira, muy difuminado */}
-            <div className={`${uid}-spin`} style={{ ...full, inset: "10%", animationDuration: "40s", background: "conic-gradient(from 90deg, #ff5f6d, #ffc371, #f9f871, #5fffd0, #5fb8ff, #9a6bff, #ff5fd1, #ff5f6d)", WebkitMaskImage: "radial-gradient(circle, transparent 56%, #000 66%, transparent 78%)", maskImage: "radial-gradient(circle, transparent 56%, #000 66%, transparent 78%)", filter: "blur(9px)", opacity: 0.38, mixBlendMode: "screen" }} />
         </div>
     )
 }
