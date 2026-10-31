@@ -179,7 +179,7 @@ function recuento(a: Acierto | undefined | null) {
     const pend = days.filter((d) => !d.obs && d.day <= new Date().toISOString().slice(0, 10)).length
     const maeI = n ? eI / n : null,
         maeM = n ? eM / n : null
-    const dec = (v: number) => dec1(v)
+    const dec = (v: number) => dec1(uTd(v))
     const resumen =
         maeI == null || maeM == null
             ? t("Aún sin datos medidos: AEMET los publica de 1 a 4 días después.", "No measurements yet: AEMET publishes them 1 to 4 days later.")
@@ -715,6 +715,69 @@ function temaManual(): TemaManual {
     if (!g.__tiempoTemaManual) g.__tiempoTemaManual = { manual: readSaved(), mSubs: new Set() }
     return g.__tiempoTemaManual
 }
+// ---------------- Ajustes del visitante (unidades e idioma), compartidos por todas las piezas ----------------
+// La pieza TiempoAjustes los cambia; se guardan en el navegador y todas las piezas se vuelven a pintar.
+export type AjustesWeb = { temp: "C" | "F"; viento: "kmh" | "mph" | "ms" | "kn"; lluvia: "mm" | "in"; idioma: "auto" | "es" | "en" }
+const AJ_DEF: AjustesWeb = { temp: "C", viento: "kmh", lluvia: "mm", idioma: "auto" }
+const AJ_KEY = "tiempo-ajustes"
+type AjBus = { aj: AjustesWeb; subs: Set<() => void> }
+function ajustesBus(): AjBus {
+    const g = globalThis as unknown as { __tiempoAjustes?: AjBus }
+    if (!g.__tiempoAjustes) {
+        let aj = AJ_DEF
+        try {
+            const v = localStorage.getItem(AJ_KEY)
+            if (v) aj = { ...AJ_DEF, ...(JSON.parse(v) as Partial<AjustesWeb>) }
+        } catch {}
+        g.__tiempoAjustes = { aj, subs: new Set() }
+    }
+    return g.__tiempoAjustes
+}
+export function cambiarAjustes(p: Partial<AjustesWeb>) {
+    const bus = ajustesBus()
+    bus.aj = { ...bus.aj, ...p }
+    try {
+        localStorage.setItem(AJ_KEY, JSON.stringify(bus.aj))
+    } catch {}
+    bus.subs.forEach((f) => f())
+}
+/** Los ajustes del visitante; la pieza se vuelve a pintar cuando cambian */
+export function useAjustesWeb(): AjustesWeb {
+    const [aj, setAj] = useState(() => ajustesBus().aj)
+    useEffect(() => {
+        const bus = ajustesBus()
+        const on = () => setAj(bus.aj)
+        bus.subs.add(on)
+        on()
+        return () => {
+            bus.subs.delete(on)
+        }
+    }, [])
+    AJ = aj
+    return aj
+}
+let AJ: AjustesWeb = AJ_DEF
+/** Unidades: reciben °C, km/h y mm y devuelven lo elegido */
+export const uT = (c: number) => (AJ.temp === "F" ? (c * 9) / 5 + 32 : c)
+export const uTd = (c: number) => (AJ.temp === "F" ? (c * 9) / 5 : c)
+export const uV = (kmh: number) => Math.round(AJ.viento === "mph" ? kmh * 0.621371 : AJ.viento === "ms" ? kmh / 3.6 : AJ.viento === "kn" ? kmh * 0.539957 : kmh)
+export const uVL = () => (AJ.viento === "mph" ? "mph" : AJ.viento === "ms" ? "m/s" : AJ.viento === "kn" ? "kn" : "km/h")
+export const uR = (mm: number) => {
+    const v = (AJ.lluvia === "in" ? mm / 25.4 : mm).toFixed(AJ.lluvia === "in" ? 2 : 1)
+    return IDI === "en" ? v : v.replace(".", ",")
+}
+export const uRL = () => (AJ.lluvia === "in" ? "in" : "mm")
+/** Tema elegido a mano por el visitante (o null para seguir al navegador) */
+export function setTemaManual(m: "claro" | "oscuro" | null) {
+    const bus = temaManual()
+    bus.manual = m
+    try {
+        if (m) localStorage.setItem(TEMA_KEY, m)
+        else localStorage.removeItem(TEMA_KEY)
+    } catch {}
+    bus.mSubs.forEach((f) => f())
+}
+
 export function useTema(theme: Props["theme"]) {
     const [sysDark, setSysDark] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(prefers-color-scheme: dark)").matches)
     const [manual, setManual] = useState(() => temaManual().manual)
@@ -740,7 +803,7 @@ export function useTema(theme: Props["theme"]) {
         } catch {}
         bus.mSubs.forEach((f) => f())
     }
-    return { dark, toggleTheme }
+    return { dark, toggleTheme, manual }
 }
 
 /**
@@ -749,7 +812,8 @@ export function useTema(theme: Props["theme"]) {
  */
 export function useTiempo(props: Partial<Props>) {
     const p = { ...DEFAULTS, ...props } as Props
-    setIdioma(p.idioma)
+    const ajw = useAjustesWeb()
+    setIdioma(ajw.idioma !== "auto" ? ajw.idioma : p.idioma)
     const {
         cityId,
         baseUrl,
@@ -944,7 +1008,7 @@ export function useTiempo(props: Partial<Props>) {
         const i = doc.ml_rain.days.indexOf(key)
         return i >= 0 ? doc.ml_rain.prob[i] ?? null : null
     }
-    const dec = (v: number) => dec1(v)
+    const dec = (v: number) => dec1(uTd(v))
 
     // Lluvia: total de cada día, escrito junto a su columna a la hora en que más llueve,
     // con la probabilidad de la IA («✦ 70 %») si la hay
@@ -1167,14 +1231,14 @@ export function SeccionAhora({ v }: { v: Vista }) {
                             </span>
                         </div>
                         <div className={`${uid}-in`} style={{ fontFamily: SANS, fontWeight: 300, fontSize: Math.round(W * 0.44), lineHeight: 0.86, letterSpacing: "-0.07em", marginTop: 22, marginLeft: -6, color: inkColor, animationDelay: "160ms", fontVariantNumeric: "tabular-nums" }}>
-                            <CountUp value={now.temp} from={now.temp - 9} animate={animate} />
+                            <CountUp value={uT(now.temp)} from={uT(now.temp) - 9} animate={animate} />
                             <span style={{ fontSize: "0.42em", verticalAlign: "0.95em", letterSpacing: 0, marginLeft: 2 }}>°</span>
                         </div>
                         <div className={`${uid}-in`} style={{ fontFamily: MONO, fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: softColor, marginTop: 14, animationDelay: "260ms" }}>
                             {stateLabel}
                             {todayMax != null && (
                                 <span style={{ letterSpacing: "0.04em", marginLeft: 10 }}>
-                                    ↑ {todayMax}° ↓ {todayMin}°
+                                    ↑ {Math.round(uT(todayMax))}° ↓ {Math.round(uT(todayMin!))}°
                                 </span>
                             )}
                             {aiOn && (
@@ -1245,10 +1309,10 @@ export function SeccionDatos({ v }: { v: Vista }) {
             <div style={{ padding: "0 20px 10px" }}>
                         <div style={{ display: "grid", gridTemplateColumns: `repeat(${showFeels ? 4 : 3}, minmax(0, 1fr))`, borderTop: `1px solid ${rgba(inkColor, 0.12)}` }}>
                             {[
-                                ...(showFeels ? [[t("Sensación", "Feels like"), String(Math.round(feelsOf(now.temp, now.wind, now.hum))), "°", ALERT[feelsLevel(feelsOf(now.temp, now.wind, now.hum), null)] || nowCol, null]] : []),
-                                [t("Lluvia", "Rain"), now.rain >= 0.1 ? dec1(now.rain) : "0", "mm", rainColor, null],
+                                ...(showFeels ? [[t("Sensación", "Feels like"), String(Math.round(uT(feelsOf(now.temp, now.wind, now.hum)))), "°", ALERT[feelsLevel(feelsOf(now.temp, now.wind, now.hum), null)] || nowCol, null]] : []),
+                                [t("Lluvia", "Rain"), now.rain >= 0.1 ? uR(now.rain) : "0", uRL(), rainColor, null],
                                 [t("Humedad", "Humidity"), now.hum != null ? String(Math.round(now.hum)) : "–", "%", "#33b3ad", null],
-                                [t("Viento", "Wind"), now.wind != null ? String(Math.round(now.wind)) : "–", "km/h", windColor, now.dir],
+                                [t("Viento", "Wind"), now.wind != null ? String(uV(now.wind)) : "–", uVL(), windColor, now.dir],
                             ].map(([k, v, u, c, d], n) => (
                                 <div key={String(k)} className={`${uid}-in`} style={{ paddingTop: 12, paddingLeft: n ? (showFeels ? 9 : 12) : 0, minWidth: 0, borderLeft: n ? `1px solid ${rgba(inkColor, 0.08)}` : undefined, animationDelay: `${440 + n * 70}ms` }}>
                                     <div style={labC(String(c))}>{k}</div>
@@ -1483,7 +1547,7 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                     groups.map((g, k) =>
                         dayCorr(g.list) == null ? null : (
                             <span key={`c${g.key}`} title={t("Corrección de la IA ese día: cuánto sube (+) o baja (−) lo que decían los modelos", "AI correction that day: how much it raises (+) or lowers (−) the models")} style={{ position: "absolute", right: CLOUD_W + 4, top: k === 0 ? 4 : y(g.start) + 4, padding: "1px 5px", borderRadius: 999, border: `1px solid ${rgba(tempMild, 0.45)}`, background: rgba(bgColor, 0.85), fontFamily: MONO, fontSize: 8.5, lineHeight: 1.3, color: inkColor, whiteSpace: "nowrap", pointerEvents: "none" }}>
-                                <span style={{ color: tempMild }}>✦</span> {signo(dayCorr(g.list)!)}°
+                                <span style={{ color: tempMild }}>✦</span> {signo(uTd(dayCorr(g.list)!))}°
                             </span>
                         )
                     )}
@@ -1492,8 +1556,8 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                 {showWind &&
                     windPeaks.map((h) => (
                         <span key={`wp${h.t}`} style={{ position: "absolute", left: wx(h.wind!) + 5, top: y(h.t) - 7, fontFamily: MONO, fontSize: 9.5, lineHeight: 1, color: dark ? mix(windColor, "#ffffff", 0.3) : mix(windColor, inkColor, 0.25), whiteSpace: "nowrap", padding: "2px 3px", borderRadius: 4, background: rgba(bgColor, 0.8), pointerEvents: "none" }}>
-                            {Math.round(h.wind!)}
-                            <span style={{ fontSize: 7.5, marginLeft: 1, opacity: 0.8 }}>km/h</span>
+                            {uV(h.wind!)}
+                            <span style={{ fontSize: 7.5, marginLeft: 1, opacity: 0.8 }}>{uVL()}</span>
                         </span>
                     ))}
 
@@ -1503,8 +1567,8 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                         <span key={`rd${d.t}`} style={{ position: "absolute", left: RX + RW + 4, top: y(d.t) - 6, fontFamily: MONO, fontSize: 9, lineHeight: 1, color: dark ? mix(rainColor, "#ffffff", 0.3) : mix(rainColor, "#1d3a8a", 0.55), textShadow: `0 0 4px ${bgColor}, 0 0 2px ${bgColor}`, whiteSpace: "nowrap", pointerEvents: "none" }}>
                             {d.mm >= 0.2 && (
                                 <>
-                                    {dec1(d.mm)}
-                                    <span style={{ fontSize: 7.5, marginLeft: 1 }}>mm</span>
+                                    {uR(d.mm)}
+                                    <span style={{ fontSize: 7.5, marginLeft: 1 }}>{uRL()}</span>
                                 </>
                             )}
                             {d.prob != null && d.prob >= 0.1 && (
@@ -1577,7 +1641,7 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                             pointerEvents: "none",
                         }}
                     >
-                        {Math.round(m.h.temp)}°
+                        {Math.round(uT(m.h.temp))}°
                     </span>
                 ))}
 
@@ -1618,9 +1682,9 @@ export function SeccionAcierto({ v }: { v: Vista }) {
                                     const near = (p: N, m: N, v: N, ai: boolean) => p != null && m != null && v != null && (ai ? Math.abs(p - v) < Math.abs(m - v) - 0.05 : Math.abs(m - v) < Math.abs(p - v) - 0.05)
                                     const cell = (mx: N, mn: N, ai: boolean) => (
                                         <span>
-                                            <b style={{ fontWeight: near(t.max, t.mod_max, o.tmax, ai) ? 700 : 400, color: near(t.max, t.mod_max, o.tmax, ai) ? inkColor : softColor }}>{mx != null ? Math.round(mx) : "–"}°</b>
+                                            <b style={{ fontWeight: near(t.max, t.mod_max, o.tmax, ai) ? 700 : 400, color: near(t.max, t.mod_max, o.tmax, ai) ? inkColor : softColor }}>{mx != null ? Math.round(uT(mx)) : "–"}°</b>
                                             <span style={{ color: softColor }}> / </span>
-                                            <b style={{ fontWeight: near(t.min, t.mod_min, o.tmin, ai) ? 700 : 400, color: near(t.min, t.mod_min, o.tmin, ai) ? inkColor : softColor }}>{mn != null ? Math.round(mn) : "–"}°</b>
+                                            <b style={{ fontWeight: near(t.min, t.mod_min, o.tmin, ai) ? 700 : 400, color: near(t.min, t.mod_min, o.tmin, ai) ? inkColor : softColor }}>{mn != null ? Math.round(uT(mn)) : "–"}°</b>
                                         </span>
                                     )
                                     const dd = new Date(`${r.day}T12:00:00Z`)
@@ -1629,7 +1693,7 @@ export function SeccionAcierto({ v }: { v: Vista }) {
                                             {fmtWd.format(dd).replace(".", "")} {fmtDay.format(dd).slice(0, 2)}
                                         </span>,
                                         <span key={`o${r.day}`} style={{ color: inkColor }}>
-                                            {o.tmax != null ? Math.round(o.tmax) : "–"}° / {o.tmin != null ? Math.round(o.tmin) : "–"}°
+                                            {o.tmax != null ? Math.round(uT(o.tmax)) : "–"}° / {o.tmin != null ? Math.round(uT(o.tmin)) : "–"}°
                                         </span>,
                                         <span key={`i${r.day}`}>{cell(t.max, t.min, true)}</span>,
                                         <span key={`m${r.day}`}>{cell(t.mod_max, t.mod_min, false)}</span>,

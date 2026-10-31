@@ -7,7 +7,7 @@
  */
 import { addPropertyControls, ControlType } from "framer"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { BASE, cityBus, MONO, mix, rgba, SANS, scale, setIdioma, t, useTema } from "./TiempoNucleo.tsx"
+import { BASE, cityBus, MONO, mix, rgba, SANS, scale, setIdioma, t, uR, uRL, uT, useAjustesWeb, useTema, uV, uVL } from "./TiempoNucleo.tsx"
 
 type Indice = { res: number; lat: number[]; lon: number[]; steps: string[] }
 type Paso = { t: string; temp: (number | null)[]; rain: (number | null)[]; wind: (number | null)[]; dir: (number | null)[] }
@@ -82,7 +82,8 @@ export default function TiempoMapa(props: Partial<Props>) {
         radius = 0,
         baseUrl = BASE,
     } = props
-    setIdioma(idioma)
+    const ajw = useAjustesWeb()
+    setIdioma(ajw.idioma !== "auto" ? ajw.idioma : idioma)
     const { dark } = useTema(theme)
     const bg = dark ? "#05060a" : "#f5efe3",
         ink = dark ? "#eef0f6" : "#1d1a17",
@@ -281,9 +282,9 @@ export default function TiempoMapa(props: Partial<Props>) {
             }
         }
         if (best < 0 || bd > 0.15) return null
-        if (capa === "temp") return paso.temp[best] == null ? null : `${Math.round(paso.temp[best]! / 10)}°`
-        if (capa === "lluvia") return paso.rain[best] == null || paso.rain[best]! < 1 ? null : (paso.rain[best]! / 10).toFixed(1).replace(".", ",")
-        return paso.wind[best] == null ? null : String(paso.wind[best])
+        if (capa === "temp") return paso.temp[best] == null ? null : `${Math.round(uT(paso.temp[best]! / 10))}°`
+        if (capa === "lluvia") return paso.rain[best] == null || paso.rain[best]! < 1 ? null : uR(paso.rain[best]! / 10)
+        return paso.wind[best] == null ? null : String(uV(paso.wind[best]!))
     }
     const etiquetas = useMemo(() => CIUDADES.filter(([, la, lo]) => lo >= lo0 && lo <= lo1 && la >= la0 && la <= la1), [zona])
 
@@ -317,7 +318,7 @@ export default function TiempoMapa(props: Partial<Props>) {
             : capa === "lluvia"
               ? `linear-gradient(90deg, ${rgba(rainColor, 0.25)}, ${rgba(rainColor, 0.95)})`
               : `linear-gradient(90deg, ${VIENTO.map(([, c]) => c).join(",")})`
-    const marcas = capa === "temp" ? ["-5°", "12°", "36°"] : capa === "lluvia" ? ["0,1", "3", "10 mm / 3 h"] : ["0", "30", "75 km/h"]
+    const marcas = capa === "temp" ? [-5, 12, 36].map((v) => `${Math.round(uT(v))}°`) : capa === "lluvia" ? [uR(0.1), uR(3), `${uR(10)} ${uRL()} / 3 h`] : ["0", String(uV(30)), `${uV(75)} ${uVL()}`]
 
     return (
         <div ref={ref} style={{ width: "100%", background: bg, color: ink, borderRadius: radius, overflow: "hidden", fontFamily: SANS, padding: "16px 0 18px" }}>
