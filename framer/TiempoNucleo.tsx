@@ -688,7 +688,7 @@ function Esfera({ color, sky, cloud, windK, blur, uid }: { color: string; sky: S
             {/* 1. halo */}
             <div className={`${k}-halo`} style={{ ...full, inset: "-6%", background: `radial-gradient(closest-side, ${rgba(c1, 0.55)}, ${rgba(c2, 0.22)} 55%, transparent 78%)`, filter: "blur(18px)" }} />
             {/* halo de colores: un anillo arcoíris que gira despacio, muy difuminado */}
-            <div className={`${k}-sheen`} style={{ ...full, inset: "6%", animationDuration: "40s", background: "conic-gradient(from 90deg, #ff5f6d, #ffc371, #f9f871, #5fffd0, #5fb8ff, #9a6bff, #ff5fd1, #ff5f6d)", WebkitMaskImage: "radial-gradient(circle, transparent 58%, #000 66%, transparent 80%)", maskImage: "radial-gradient(circle, transparent 58%, #000 66%, transparent 80%)", filter: "blur(10px)", opacity: 0.45, mixBlendMode: "screen" }} />
+            <div className={`${k}-sheen`} style={{ ...full, inset: "1%", animationDuration: "40s", background: "conic-gradient(from 90deg, #ff5f6d, #ffc371, #f9f871, #5fffd0, #5fb8ff, #9a6bff, #ff5fd1, #ff5f6d)", WebkitMaskImage: "radial-gradient(circle, transparent 60%, #000 70%, transparent 86%)", maskImage: "radial-gradient(circle, transparent 60%, #000 70%, transparent 86%)", filter: "blur(12px)", opacity: 0.7 }} />
             {/* 2. el líquido */}
             <div style={{ ...full, inset: "10%", overflow: "hidden", filter: blur > 0 ? `blur(${blur}px)` : undefined, background: `radial-gradient(circle at 35% 30%, ${c1} 0%, ${base} 45%, ${deep} 100%)`, WebkitMaskImage: "radial-gradient(circle, #000 66%, rgba(0,0,0,.85) 70%, transparent 72%)", maskImage: "radial-gradient(circle, #000 66%, rgba(0,0,0,.85) 70%, transparent 72%)" }}>
                 {mancha(c2, "70%", "-5%", "-8%", `${k}-o1`)}
