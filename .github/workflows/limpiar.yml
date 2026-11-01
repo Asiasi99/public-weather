@@ -1,0 +1,26 @@
+# Lista lo que hay en el cubo de Supabase y, si se le dicen carpetas, las borra. Solo a mano.
+name: Limpiar Supabase
+
+on:
+  workflow_dispatch:
+    inputs:
+      carpetas:
+        description: "Carpetas que borrar, separadas por espacios (vacío = solo listar)"
+        type: string
+        default: ""
+
+jobs:
+  limpiar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          CARPETAS: ${{ inputs.carpetas }}
+        run: python scripts/limpiar.py $CARPETAS
