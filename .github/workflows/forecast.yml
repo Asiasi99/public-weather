@@ -41,21 +41,14 @@ jobs:
       # Las de la IA (scripts/ml) son para añadir la serie «ml»: si no hay IA entrenada, run.py publica sin ella.
       - run: pip install -r scripts/requirements.txt -r scripts/ml/requirements.txt
 
-      # Lo leído de cada modelo en la rejilla de España (weather/grid.py), de la ejecución anterior:
-      # así cada hora solo se lee el modelo que tiene pasada nueva y se mezclan todos.
-      - name: Recuperar la caché de la rejilla
-        uses: actions/cache/restore@v4
-        with:
-          path: out/grid-cache
-          key: grid-${{ github.run_id }}
-          restore-keys: grid-
-
       - name: Descargar, recortar y subir a Supabase
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           # Para «¿acertó la IA?»: lo medido cada día en AEMET (una petición cada 6 h).
           AEMET_API_KEY: ${{ secrets.AEMET_API_KEY }}
+          # Plan de pago de Open-Meteo (opcional): sin ella se usa el plan gratis, no comercial
+          OPEN_METEO_KEY: ${{ secrets.OPEN_METEO_KEY }}
           MODELS: ${{ inputs.models }}
         run: |
           args=()
@@ -63,14 +56,7 @@ jobs:
           [ -n "$MODELS" ] && args+=(--models $MODELS)
           python scripts/run.py "${args[@]}"
 
-      - name: Guardar la caché de la rejilla
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: out/grid-cache
-          key: grid-${{ github.run_id }}
-
-      # Copia comprimida de todo cada 6 h, para entrenar la IA con tus propias previsiones en el futuro.
+      # Copia comprimida de todo una vez al día (la primera ejecución del día), para entrenar la IA con tus datos.
       # Si falla, el pronóstico ya está publicado: no se marca en rojo.
       - name: Archivar previsiones
         if: always()

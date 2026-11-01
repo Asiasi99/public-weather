@@ -31,7 +31,7 @@ def norm(s):
     return unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode().lower()
 
 
-# Países fuera de España que ya tienen rejilla (scripts/weather/grid.py). Se amplía al abrir más Europa.
+# Países fuera de España que salen en el buscador (la app pide su previsión a Open-Meteo). Se puede ampliar.
 PAISES = ["PT", "FR", "AD", "MC", "GI"]
 
 
