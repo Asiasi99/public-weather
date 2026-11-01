@@ -1235,7 +1235,7 @@ export function Caja({ v, radius, children, style }: { v: ReturnType<typeof useT
             </div>
         )
     return (
-        <div ref={v.ref} style={{ ...box, position: "relative", isolation: "isolate", transition: "background-color .6s ease, color .6s ease", ...style }}>
+        <div ref={v.ref} style={{ ...box, position: "relative", isolation: "isolate", contain: "paint", transition: "background-color .6s ease, color .6s ease", ...style }}>
             <style>{v.css}</style>
             {children}
         </div>
