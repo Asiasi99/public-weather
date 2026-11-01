@@ -569,7 +569,33 @@ export function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, acento, u
         const col = (c: string, a: number) => { const [r, gg, b] = rgb(c); return `rgba(${r},${gg},${b},${Math.max(0, Math.min(1, a))})` }
         const MAXP = 360
         const parts = Array.from({ length: MAXP }, () => ({ x: rnd(), y: rnd(), v: 0.55 + rnd() * 0.9, vida: rnd(), s: 0.6 + rnd() * 1.1 }))
-        const nubes = Array.from({ length: 12 }, (_, i) => ({ x: rnd() * 1.6 - 0.3, y: rnd() * 0.75, r: 0.14 + rnd() * 0.2, capa: i % 2, f: rnd() * 6 }))
+        const nubes = Array.from({ length: 16 }, (_, i) => ({ x: rnd() * 1.8 - 0.4, y: -0.05 + rnd() * 0.75, r: 0.16 + rnd() * 0.22, capa: i % 3 ? 1 : 0, f: rnd() * 6 }))
+        // Una nube con volumen (luz arriba, sombra gris abajo), dibujada una vez y reutilizada en cada fotograma
+        const sprites = new Map<string, HTMLCanvasElement>()
+        const nubeSprite = (oscuro: boolean, lluvia: boolean) => {
+            const k = `${oscuro}|${lluvia}`
+            let sp = sprites.get(k)
+            if (sp) return sp
+            const [luz, cuerpo, sombra] = oscuro
+                ? lluvia ? ["#9aa3b6", "#5f687c", "#2c3240"] : ["#d3d9e6", "#8d96ab", "#3a4152"]
+                : lluvia ? ["#e8ebf1", "#b4bccb", "#68728a"] : ["#ffffff", "#eef1f6", "#97a3b8"]
+            sp = document.createElement("canvas")
+            sp.width = 320; sp.height = 240
+            const q = sp.getContext("2d")!
+            for (const [x, y, r] of [[0.5, 0.6, 0.3], [0.3, 0.66, 0.21], [0.7, 0.63, 0.24], [0.42, 0.44, 0.23], [0.6, 0.42, 0.19], [0.17, 0.73, 0.13], [0.84, 0.72, 0.14]]) {
+                const cx = x * 320, cy = y * 180 + 18, R = r * 320
+                const gr = q.createRadialGradient(cx - R * 0.25, cy - R * 0.35, R * 0.1, cx, cy, R)
+                gr.addColorStop(0, luz); gr.addColorStop(0.6, cuerpo); gr.addColorStop(1, col(cuerpo, 0))
+                q.fillStyle = gr; q.beginPath(); q.arc(cx, cy, R, 0, Math.PI * 2); q.fill()
+            }
+            // sombra por debajo, solo sobre la nube
+            q.globalCompositeOperation = "source-atop"
+            const sh = q.createLinearGradient(0, 0, 0, 240)
+            sh.addColorStop(0, col(sombra, 0)); sh.addColorStop(0.45, col(sombra, 0)); sh.addColorStop(0.85, col(sombra, 0.8))
+            q.fillStyle = sh; q.fillRect(0, 0, 320, 240)
+            sprites.set(k, sp)
+            return sp
+        }
         const gotas = Array.from({ length: 160 }, () => ({ x: rnd() * 1.4 - 0.2, y: rnd(), v: 0.75 + rnd() * 0.6, l: 0.5 + rnd() * 0.8 }))
         const estrellas = Array.from({ length: 60 }, () => ({ x: rnd(), y: rnd() * 0.85, s: 0.4 + rnd() * 1.1, f: rnd() * 6 }))
         const chispas = Array.from({ length: 40 }, () => ({ x: rnd(), y: rnd(), v: 0.3 + rnd() * 0.7, s: 1 + rnd() * 2.4, f: rnd() * 6 }))
@@ -653,25 +679,28 @@ export function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, acento, u
                     g.beginPath(); g.arc(s.x * W, s.y * H, s.s, 0, Math.PI * 2); g.fill()
                 }
             }
-            // 3. nubes en dos capas
-            const nN = Math.round(Math.min(1, c.cloud * 1.1) * nubes.length)
-            const tono = c.sky === "lluvia" ? (c.dark ? "#5d6679" : "#8e98ab") : c.dark ? "#cfd5e2" : "#ffffff"
-            for (let i = 0; i < nN; i++) {
-                const n = nubes[i]
-                const k = n.capa ? 1 : 0.55 // la capa de cerca va más rápido
-                n.x += (ux * (10 + vel * 0.22) * k * dt) / W
-                n.y += (uy * (4 + vel * 0.05) * k * dt) / H
-                if (n.x > 1.5) n.x = -0.5; if (n.x < -0.5) n.x = 1.5
-                if (n.y > 0.95) n.y = -0.2; if (n.y < -0.2) n.y = 0.95
-                const R = n.r * Math.max(W, 280) * (n.capa ? 1 : 0.75)
-                const a = (c.sky === "lluvia" ? 0.7 : c.dark ? 0.28 : 0.8) * (n.capa ? 1 : 0.6)
-                for (const [dx, dy, rr] of [[0, 0, 1], [-0.6, 0.18, 0.72], [0.6, 0.14, 0.78], [0.2, -0.32, 0.62], [-0.25, -0.2, 0.55]]) {
-                    const cx = n.x * W + dx * R + Math.sin(tt * 0.3 + n.f + dx) * 4, cy = n.y * H + dy * R * 0.55
-                    const s = g.createRadialGradient(cx, cy, 0, cx, cy, R * rr)
-                    s.addColorStop(0, col(tono, a)); s.addColorStop(0.55, col(tono, a * 0.55)); s.addColorStop(1, col(tono, 0))
-                    g.fillStyle = s; g.fillRect(cx - R * rr, cy - R * rr, R * rr * 2, R * rr * 2)
-                }
+            // 3. nubes: con cielo tapado, un velo gris apaga los colores; y nubes con volumen en dos capas
+            //    (las de lejos, pequeñas, lentas y pálidas; las de cerca, grandes y más rápidas), tantas como nubosidad
+            if (c.cloud > 0.45) {
+                g.fillStyle = col(c.dark ? "#1a1f2d" : c.sky === "lluvia" ? "#b9c0cc" : "#d5dae3", Math.min(0.6, (c.cloud - 0.45) * (c.dark ? 0.9 : 1.1)))
+                g.fillRect(0, 0, W, H)
             }
+            const nN = Math.round(Math.min(1, Math.pow(c.cloud, 1.1) * 1.15) * nubes.length)
+            const sp = nubeSprite(c.dark, c.sky === "lluvia")
+            for (let capa = 0; capa < 2; capa++)
+                for (let i = 0; i < nN; i++) {
+                    const n = nubes[i]
+                    if (n.capa !== capa) continue
+                    const k = capa ? 1 : 0.45 // la capa de cerca va más rápido (paralaje)
+                    n.x += (ux * (16 + vel * 0.3) * k * dt) / W
+                    n.y += (uy * (3 + vel * 0.05) * k * dt) / H
+                    if (n.x > 1.5) n.x = -0.5; if (n.x < -0.5) n.x = 1.5
+                    if (n.y > 0.85) n.y = -0.25; if (n.y < -0.25) n.y = 0.85
+                    const R = n.r * Math.max(W, 300) * (capa ? 1 : 0.6) * (1 + 0.04 * Math.sin(tt * 0.5 + n.f))
+                    g.globalAlpha = (c.dark ? 0.6 : 0.95) * (capa ? 1 : 0.55)
+                    g.drawImage(sp, n.x * W - R, n.y * H - R * 0.75, R * 2, R * 1.5)
+                }
+            g.globalAlpha = 1
             // 5a. calor: chispas que suben
             if (c.temp >= 26) {
                 const k = Math.min(1, (c.temp - 26) / 10)
