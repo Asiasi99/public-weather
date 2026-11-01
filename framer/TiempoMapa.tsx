@@ -37,6 +37,9 @@ const LLUVIA: [number, string][] = [
     [30, "#ff3fbf"],
 ]
 
+// Pocas ciudades, para que el mapa respire (las isotermas ya dan la temperatura)
+const PRINCIPALES = new Set(["Madrid", "Barcelona", "Sevilla", "Bilbao", "Lisboa", "Paris", "Lyon", "Bordeaux", "Marseille", "Valencia", "A Coruña", "Palma", "Las Palmas", "S/C Tenerife", "Ponta Delgada", "Funchal"])
+
 const cache = new Map<string, Promise<any>>()
 function get<T>(url: string): Promise<T> {
     if (!cache.has(url)) {
@@ -401,6 +404,7 @@ export default function TiempoMapa(props: Partial<Props>) {
             ctx.lineWidth = 0.8
             ctx.lineCap = "round"
             const etiquetasIso: [number, number, number][] = []
+            const ciudadesPx = CIUDADES.filter(([n]) => PRINCIPALES.has(n)).map(([, la, lo]) => [px(lo), py(la)])
             for (let L = Math.ceil(vmin / step) * step; L <= vmax; L += step) {
                 ctx.beginPath()
                 const mids: [number, number][] = []
@@ -435,6 +439,8 @@ export default function TiempoMapa(props: Partial<Props>) {
                     if (mx < 14 || my < 10 || mx > W - 14 || my > H - 8) continue
                     if (tierra && !ctx.isPointInPath(tierra, mx * dpr, my * dpr)) continue
                     if (etiquetasIso.some(([ex, ey, el]) => (ex - mx) ** 2 + (ey - my) ** 2 < (el === L ? 180 * 180 : 60 * 60))) continue
+                    // ni encima de las pastillas de las ciudades (van a la derecha de su punto)
+                    if (ciudadesPx.some(([cx2, cy2]) => mx > cx2 - 22 && mx < cx2 + 62 && Math.abs(my - cy2) < 18)) continue
                     etiquetasIso.push([mx, my, L])
                 }
             }
@@ -586,7 +592,6 @@ export default function TiempoMapa(props: Partial<Props>) {
         return paso.wind[best] == null ? null : String(uV(paso.wind[best]!))
     }
     // Pocas ciudades, para que el mapa respire (las isotermas ya dan la temperatura)
-    const PRINCIPALES = new Set(["Madrid", "Barcelona", "Sevilla", "Bilbao", "Lisboa", "Paris", "Lyon", "Bordeaux", "Marseille", "Valencia", "A Coruña", "Palma", "Las Palmas", "S/C Tenerife", "Ponta Delgada", "Funchal"])
     const etiquetas = useMemo(() => CIUDADES.filter(([n, la, lo]) => PRINCIPALES.has(n) && lo >= lo0 && lo <= lo1 && la >= la0 && la <= la1), [zona])
 
     const fmtPaso = (s: string) => new Intl.DateTimeFormat(t("es-ES", "en-GB"), { timeZone: "Europe/Madrid", weekday: "short", day: "numeric" }).format(new Date(s)).replace(".", "")
