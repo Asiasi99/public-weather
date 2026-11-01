@@ -596,7 +596,8 @@ export function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, acento, u
         const frame = (now: number) => {
             raf = 0
             // como mucho 30 fotogramas por segundo: se ve igual de suave y cuesta la mitad
-            if (now - t0 < 31 && !quieto) { if (visible) raf = requestAnimationFrame(frame); return }
+            // (con lluvia, a 60: las gotas caen rápido y a 30 se verían a saltos)
+            if (now - t0 < 31 && !quieto && cfg.current.sky !== "lluvia") { if (visible) raf = requestAnimationFrame(frame); return }
             const dt = Math.min(0.06, Math.max(0.001, (now - t0) / 1000)); t0 = now; tt += dt
             const c = cfg.current
             const d = ((c.dir ?? 270) * Math.PI) / 180
@@ -1191,7 +1192,7 @@ export function useTiempo(props: Partial<Props>) {
 
     const css = `
         @keyframes ${uid}-nudge { 0%,100% { transform: translateY(1.5px); opacity: .55 } 50% { transform: translateY(-1.5px); opacity: 1 } }
-        @keyframes ${uid}-fall { from { background-position: 0 0 } to { background-position: -5px 24px } }
+        @keyframes ${uid}-fall { from { background-position: 0 0 } to { background-position: 0 24px } }
         @keyframes ${uid}-pulse { 0% { transform: scale(1); opacity: .55 } 100% { transform: scale(2.6); opacity: 0 } }
         @keyframes ${uid}-in { from { opacity: 0; transform: translateY(14px); filter: blur(8px) } to { opacity: 1; transform: none; filter: blur(0) } }
         @keyframes ${uid}-orbin { from { opacity: 0 } to { opacity: 1 } }
@@ -1203,7 +1204,7 @@ export function useTiempo(props: Partial<Props>) {
         .${uid}-draw { stroke-dasharray: 1; animation: ${uid}-draw 3s cubic-bezier(.65,0,.15,1) .5s both }
         .${uid}-ring { will-change: transform, opacity; animation: ${uid}-pulse 2.4s ease-out infinite }
         .${uid}-arrow { animation: ${uid}-nudge 2.4s ease-in-out infinite }
-        .${uid}-rain { animation: ${uid}-fall .9s linear infinite }
+        .${uid}-rain { animation: ${uid}-fall .55s linear infinite; will-change: background-position }
         ${animate ? "" : `[class^="${uid}-"] { animation: none !important }`}
         @media (prefers-reduced-motion: reduce) { [class^="${uid}-"] { animation: none !important } }
     `
