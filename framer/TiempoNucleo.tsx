@@ -2,7 +2,7 @@
  * TiempoNucleo — la base común de las piezas del tiempo (no es un componente para el lienzo).
  *
  * Aquí están los datos, el tema claro/oscuro compartido y las cinco secciones:
- *   SeccionAhora (esfera, temperatura, estado, frase) · SeccionAvisos · SeccionDatos (sensación, lluvia, humedad, viento)
+ *   SeccionAhora (temperatura, estado y cielo animado) · SeccionAvisos · SeccionDatos (sensación, lluvia, humedad, viento)
  *   SeccionGrafico (la tira de los próximos días) · SeccionAcierto (¿acierta la IA?)
  * Las usan TiempoAhora, TiempoAvisos, TiempoDatos, TiempoGrafico, TiempoAcierto y TiempoVertical (todo junto).
  */
@@ -99,8 +99,14 @@ type Hour = { t: number; temp: number; rain: number; wind: N; dir: N; hum: N; lo
 /** Valor de una serie en el instante t: interpola entre las dos muestras de alrededor (si están a menos de 7 h) */
 function at(ts: number[], vals: N[] | undefined, t: number): N {
     if (!vals || !ts.length) return null
-    let i = 0
-    while (i < ts.length && ts[i] < t) i++
+    // búsqueda binaria: el primer instante ≥ t (los tiempos van ordenados)
+    let i = 0,
+        j = ts.length
+    while (i < j) {
+        const h = (i + j) >> 1
+        if (ts[h] < t) i = h + 1
+        else j = h
+    }
     const a = i - 1,
         b = i
     const va = a >= 0 ? vals[a] : null,
@@ -112,14 +118,19 @@ function at(ts: number[], vals: N[] | undefined, t: number): N {
 }
 /** Lluvia por hora: la del tramo que contiene t, repartida entre las horas del tramo */
 function rainAt(ts: number[], vals: N[] | undefined, t: number): N {
-    if (!vals) return null
-    for (let i = 1; i < ts.length; i++) {
-        if (ts[i - 1] < t + 1 && t <= ts[i]) {
-            const v = vals[i]
-            return v == null ? null : v / Math.max(1, (ts[i] - ts[i - 1]) / HOUR)
-        }
+    if (!vals || ts.length < 2) return null
+    // el primer instante ≥ t (búsqueda binaria): la lluvia de ese tramo acaba ahí
+    let i = 0,
+        j = ts.length
+    while (i < j) {
+        const h = (i + j) >> 1
+        if (ts[h] < t) i = h + 1
+        else j = h
     }
-    return null
+    if (i === 0) i = ts[0] === t ? 1 : ts.length
+    if (i >= ts.length) return null
+    const v = vals[i]
+    return v == null ? null : v / Math.max(1, (ts[i] - ts[i - 1]) / HOUR)
 }
 const mean = (xs: N[]) => {
     const v = xs.filter((x): x is number => x != null && isFinite(x))
@@ -286,8 +297,20 @@ function meanDir(ds: N[], ws: N[]) {
     return n ? ((Math.atan2(x, y) * 180) / Math.PI + 360) % 360 : null
 }
 
+/** Las horas se calculan una sola vez por ciudad y hora del reloj, y las comparten todas las piezas */
+const horasCache = new WeakMap<Doc, Map<string, Hour[]>>()
 function buildHours(doc: Doc, hours: number): Hour[] {
     const t0 = Math.floor(Date.now() / HOUR) * HOUR
+    let porDoc = horasCache.get(doc)
+    if (!porDoc) horasCache.set(doc, (porDoc = new Map()))
+    const clave = `${hours}|${t0}`
+    const hecho = porDoc.get(clave)
+    if (hecho) return hecho
+    const out = calcHours(doc, hours, t0)
+    porDoc.set(clave, out)
+    return out
+}
+function calcHours(doc: Doc, hours: number, t0: number): Hour[] {
     const ms = doc.models.map((m) => ({ m, ts: m.times.map((s) => Date.parse(s)) }))
     const mlTs = doc.ml ? doc.ml.times.map((s) => Date.parse(s)) : []
     const out: Hour[] = []
@@ -409,200 +432,12 @@ function sunTimes(dayMs: number, lat: number, lon: number): [number, number] | n
     return [toMs(Jt - w / 360), toMs(Jt + w / 360)]
 }
 
-// ---------------- Frases para debajo de la temperatura ----------------
-// Situaciones del cielo y estilos. Las frases rotan a lo largo del día (cambian cada hora, sin repetirse al recargar).
-type Sit = "sol" | "pocas" | "nocheClara" | "nocheNubes" | "nuboso" | "cubierto" | "llovizna" | "lluvia" | "calor" | "frio" | "viento" | "niebla"
-export type Estilo = "mezcla" | "clasico" | "practico" | "loQueViene" | "poetico" | "humor" | "minimo" | "propia"
-
-const FRASES: Record<"clasico" | "poetico" | "humor", Record<Sit, string[]>> = {
-    clasico: {
-        sol: ["Es hora de sol.", "Cielo limpio de punta a punta.", "Día abierto. Sal a por él.", "Sol pleno, sin peros.", "Ni una nube a la vista."],
-        pocas: ["Sol, con alguna nube de paso.", "Claros y alguna nube viajera.", "Sol con compañía.", "Nubes sueltas, sol de fondo.", "Casi despejado."],
-        nocheClara: ["Noche clara. Mira arriba.", "Cielo despejado esta noche.", "Noche limpia y tranquila.", "Estrellas a la vista.", "Ni una nube tapa la noche."],
-        nocheNubes: ["Noche tranquila.", "Noche con algunas nubes.", "Nubes de paso en la oscuridad.", "Noche serena, cielo a ratos.", "Calma nocturna."],
-        nuboso: ["Gris, pero seco.", "Más nube que sol.", "Cielo entre algodones.", "Nublado, sin lluvia.", "El sol se esconde a ratos."],
-        cubierto: ["Cielo de techo bajo.", "Todo gris, de lado a lado.", "Cubierto y quieto.", "Un día de luz suave.", "Las nubes lo tapan todo."],
-        llovizna: ["Chispea. Paraguas pequeño.", "Cae una lluvia fina.", "Llovizna ligera.", "Gotas sueltas en el aire.", "Moja poco, pero moja."],
-        lluvia: ["Sí. Está lloviendo.", "Lluvia de las de verdad.", "Día de agua.", "Llueve con ganas.", "El suelo ya brilla."],
-        calor: ["Calor de los que pesan.", "Aprieta el sol.", "Día de mucho calor.", "Ambiente caldeado.", "Calor intenso hoy."],
-        frio: ["Frío de bufanda.", "Hace frío de verdad.", "El aire corta.", "Día frío.", "Temperaturas bajas."],
-        viento: ["Sopla con fuerza.", "Día de viento.", "El aire no para.", "Rachas fuertes.", "Viento protagonista."],
-        niebla: ["Niebla y humedad.", "El aire está espeso.", "Visibilidad reducida.", "Humedad a tope.", "Todo envuelto en bruma."],
-    },
-    poetico: {
-        sol: ["La luz tiene el día libre.", "El cielo se ha puesto su mejor azul.", "Todo brilla un poco más hoy.", "El sol firma cada sombra.", "Un azul sin borrones."],
-        pocas: ["Nubes que pasean sin prisa.", "El sol juega al escondite.", "Algodones sueltos sobre el azul.", "Luz y sombra se turnan.", "Un cielo con párrafos sueltos."],
-        nocheClara: ["Las estrellas están de guardia.", "La noche se ha quitado el velo.", "Un cielo para contar estrellas.", "La luna tiene el escenario libre.", "Noche de cristal."],
-        nocheNubes: ["La noche se tapa con una manta fina.", "Nubes que cruzan sin hacer ruido.", "La ciudad duerme bajo algodón.", "Oscuridad suave.", "Noche de murmullo."],
-        nuboso: ["El cielo se ha puesto un jersey gris.", "Luz tamizada, como de estudio.", "Un día de acuarela.", "El sol habla en voz baja.", "Nubes con ganas de quedarse."],
-        cubierto: ["Un techo de nubes, bajito.", "El cielo cerrado por reformas.", "Gris perla de lado a lado.", "La luz llega filtrada.", "Un día en blanco y negro."],
-        llovizna: ["El cielo susurra agua.", "Lluvia que casi no pesa.", "Gotas que no tienen prisa.", "Un rocío que cae del cielo.", "Llueve en voz baja."],
-        lluvia: ["El cielo tiene mucho que decir.", "La ciudad suena a lluvia.", "Charcos que reflejan farolas.", "Agua para todos.", "Día de cristales mojados."],
-        calor: ["El aire vibra sobre el asfalto.", "El verano no se quiere ir.", "Las sombras cotizan al alza.", "Todo arde un poco.", "El sol no da tregua."],
-        frio: ["El aire tiene filo.", "El vaho se ve al hablar.", "Frío de manos en los bolsillos.", "Un día de lana.", "El invierno asoma la nariz."],
-        viento: ["El viento reordena la ciudad.", "Todo se mueve, hasta las ideas.", "El aire tiene prisa.", "Las ramas bailan solas.", "Un día despeinado."],
-        niebla: ["La ciudad se ha borrado un poco.", "Todo parece un sueño.", "El mundo termina a cien metros.", "Niebla de película.", "Paisaje en pausa."],
-    },
-    humor: {
-        sol: ["El cielo ha venido a trabajar.", "Ni una nube. Sospechoso.", "Sol en modo influencer.", "Hoy no hay excusas.", "Las gafas de sol, felices."],
-        pocas: ["Algunas nubes, por decorar.", "Nubes de atrezo.", "Sol con figurantes.", "Nubes que no se comprometen.", "Un poco de todo, sin drama."],
-        nocheClara: ["Las estrellas han fichado.", "La luna sin filtros.", "Noche de wifi cósmico.", "Cielo en alta definición.", "Ideal para pedir deseos."],
-        nocheNubes: ["La noche, en modo incógnito.", "Estrellas: hoy no toca.", "Nubes haciendo horas extra.", "La luna, de vacaciones.", "Oscuro y punto."],
-        nuboso: ["El sol, en una reunión.", "Gris, pero sin dramas.", "Las nubes han venido a quedarse un rato.", "Día en modo ahorro de energía.", "Ni frío ni calor: nublado."],
-        cubierto: ["El cielo, en mantenimiento.", "Gris corporativo.", "Alguien ha bajado la persiana.", "Hoy el sol teletrabaja.", "Techo de cincuenta sombras de gris."],
-        llovizna: ["Chispea. Ni pa' ti ni pa' mí.", "Lluvia de las que no se deciden.", "Moja pero no convence.", "El cielo estornuda.", "Lluvia en versión demo."],
-        lluvia: ["Sí. Está lloviendo.", "El paraguas por fin tiene trabajo.", "Las plantas, encantadas.", "Día de pelo encrespado.", "Lluvia nivel: se nota."],
-        calor: ["Hace un calor que derrite opiniones.", "El aire acondicionado es tu mejor amigo.", "Hoy los helados cotizan al alza.", "Sudar sin hacer deporte: hoy sí.", "El sol, sin moderación."],
-        frio: ["Hace frío de abrazar el radiador.", "Hoy la manta no se separa de ti.", "El frío ha venido sin avisar.", "Día de capas, como una cebolla.", "Ni los pingüinos salen."],
-        viento: ["Peinarse hoy es opcional.", "El paraguas, en modo cometa.", "Viento de los que se llevan las ganas.", "Hoy vuela hasta la ropa tendida.", "Rachas con personalidad."],
-        niebla: ["Modo Silent Hill activado.", "No se ve ni el vecino.", "Niebla de las que da pereza.", "El mundo, en baja resolución.", "Visibilidad: la justa."],
-    },
-}
-
-type FraseCtx = {
-    sit: Sit
-    now: number
-    tz: string
-    temp: number
-    feels: number
-    wind: number | null
-    hum: number | null
-    night: boolean
-    hours: { t: number; temp: number; rain: number; wind: number | null }[]
-    suns: { t: number; rise: boolean }[]
-    days: number
-}
-
-function pickRot(list: string[], now: number, salt: number) {
-    const k = Math.floor(now / 3600000) + salt
-    return list[((k % list.length) + list.length) % list.length]
-}
-
-/** Consejos de asesor: cada uno con su importancia; se enseñan los más importantes primero */
-function consejos(c: FraseCtx): string[] {
-    const fmtHr = new Intl.DateTimeFormat(LOC(), { timeZone: c.tz, hour: "numeric" })
-    const hr = (t: number) => String(Number(fmtHr.format(new Date(Math.round(t / H) * H))))
-    const H = 3600000
-    const next = (n: number) => c.hours.filter((h) => h.t >= c.now - H / 2 && h.t <= c.now + n * H)
-    const tips: [number, string][] = []
-    const f = Math.round(c.feels)
-    const w = c.wind ?? 0
-    // Paraguas
-    const rainNext = next(12).find((h) => h.rain >= 0.3)
-    const rainNow = c.sit === "lluvia" || c.sit === "llovizna"
-    if (rainNow) {
-        const stop = c.hours.find((h) => h.t > c.now && h.rain < 0.2)
-        tips.push([100, stop && stop.t - c.now < 10 * H ? t(`Paraguas hasta las ${hr(stop.t)}.`, `Umbrella until ${hr(stop.t)}:00.`) : t("Paraguas todo el día.", "Umbrella all day.")])
-    } else if (rainNext) {
-        const min = Math.round((rainNext.t - c.now) / 60000)
-        tips.push([95, min <= 60 ? t("Llueve pronto: coge paraguas.", "Rain soon: take an umbrella.") : t(`Paraguas desde las ${hr(rainNext.t)}.`, `Umbrella from ${hr(rainNext.t)}:00.`)])
-    }
-    // Ropa según lo que se nota (y lo que se notará luego)
-    const later = next(10)
-    const fMin = Math.round(Math.min(f, ...later.map((h) => h.temp)))
-    const fMax = Math.round(Math.max(f, ...later.map((h) => h.temp)))
-    if (f <= 0) tips.push([90, t("Abrigo, gorro y guantes.", "Coat, hat and gloves.")])
-    else if (f < 8) tips.push([80, t("Hoy, abrigo.", "Coat today.")])
-    else if (f < 14) tips.push([70, t("Hoy, chaqueta.", "Jacket today.")])
-    else if (f < 19) tips.push([45, t("Una capa ligera basta.", "A light layer is enough.")])
-    else if (f < 27) tips.push([30, t("Manga corta.", "T-shirt weather.")])
-    else tips.push([75, t("Ropa fresca y agua.", "Light clothes and water.")])
-    if (fMax - fMin >= 9) tips.push([65, t("Viste por capas.", "Dress in layers.")])
-    // Calor y sol
-    if (!c.night && f >= 32) tips.push([88, t("Evita el sol de 14 a 18 h.", "Avoid the sun from 14:00 to 18:00.")])
-    if (!c.night && (c.sit === "sol" || c.sit === "pocas") && c.temp >= 18) tips.push([50, t("Hoy, crema solar.", "Sunscreen today.")])
-    // Viento
-    if (w >= 55) tips.push([92, t("Viento fuerte: recoge lo que vuele.", "Strong wind: secure loose items.")])
-    else if (w >= 35) tips.push([60, t("Mejor chubasquero que paraguas.", "Raincoat rather than umbrella.")])
-    else if (w >= 25) tips.push([35, t("En bici, viento en contra.", "Headwind on the bike.")])
-    // Niebla / conducción
-    if (c.sit === "niebla") tips.push([85, t("Niebla: conduce con luces.", "Fog: drive with lights on.")])
-    else if ((c.hum ?? 0) >= 92 && c.night) tips.push([40, t("Niebla al amanecer.", "Fog at dawn.")])
-    if (rainNow && w >= 30) tips.push([70, t("Calzada mojada: con calma.", "Wet roads: take it easy.")])
-    if (c.temp <= 2 && c.night) tips.push([82, t("Hielo al amanecer.", "Ice at dawn.")])
-    // Mejor momento para salir: la próxima franja de día sin lluvia, con poco viento y temperatura más agradable
-    const day = (t: number) => !c.suns.length || (() => {
-        const last = c.suns.filter((s) => s.t <= t).pop()
-        return last ? last.rise : false
-    })()
-    const cand = next(14).filter((h) => h.t > c.now && day(h.t) && h.rain < 0.2 && (h.wind ?? 0) < 30)
-    if (cand.length >= 2) {
-        const score = (h: { temp: number }) => -Math.abs(h.temp - 21)
-        const best = cand.reduce((a, h) => (score(h) > score(a) ? h : a))
-        const a = Math.max(c.now, best.t - H),
-            b = best.t + H
-        const dk = (t: number) => new Intl.DateTimeFormat("en-CA", { timeZone: c.tz }).format(new Date(t))
-        tips.push([55, dk(best.t) === dk(c.now) ? t(`Sal de ${hr(a)} a ${hr(b)} h.`, `Go out from ${hr(a)}:00 to ${hr(b)}:00.`) : t(`Mañana, sal de ${hr(a)} a ${hr(b)} h.`, `Tomorrow, go out from ${hr(a)}:00 to ${hr(b)}:00.`)])
-    }
-    // Ropa tendida
-    const dry = next(8)
-    const dryOk = !dry.some((h) => h.rain >= 0.2) && (c.hum ?? 70) < 75 && !c.night
-    if (dryOk && (w >= 8 || c.sit === "sol" || c.sit === "pocas")) tips.push([38, t("Buen día para tender.", "Good day to dry laundry.")])
-    else if (dry.some((h) => h.rain >= 0.2) && !c.night) tips.push([42, t("Hoy no tiendas.", "Don't hang laundry today.")])
-    // Casa
-    if (!c.night && c.temp >= 14 && c.temp <= 24 && w < 25 && !rainNow) tips.push([25, t("Ventila la casa.", "Air out the house.")])
-    if (c.night && c.temp >= 24) tips.push([58, t("Ventila de madrugada.", "Air out before dawn.")])
-    if (f < 10 && c.night) tips.push([33, t("Baja las persianas.", "Close the blinds.")])
-    // Sin lluvia en días
-    if (!c.hours.some((h) => h.t >= c.now && h.rain >= 0.3)) tips.push([28, t("Riega las plantas.", "Water the plants.")])
-    // Estrellas
-    if (c.night && c.sit === "nocheClara") tips.push([22, t("Noche de estrellas.", "Starry night.")])
-    if (!tips.length) tips.push([1, t("Día tranquilo.", "Quiet day.")])
-    return tips.sort((a, b) => b[0] - a[0]).map((t) => t[1])
-}
-
-/** Lo que viene en las próximas horas y días */
-function loQueViene(c: FraseCtx): string[] {
-    const fmtH = new Intl.DateTimeFormat(LOC(), { timeZone: c.tz, hour: "2-digit", minute: "2-digit" })
-    const fmtD = new Intl.DateTimeFormat(LOC(), { timeZone: c.tz, weekday: "long" })
-    const dayKey = (t: number) => new Intl.DateTimeFormat("en-CA", { timeZone: c.tz }).format(new Date(t))
-    const out: string[] = []
-    const rain = c.hours.find((h) => h.t > c.now && h.rain >= 0.3)
-    if (rain) out.push(dayKey(rain.t) === dayKey(c.now) ? t(`Lloverá a las ${fmtH.format(new Date(rain.t))}.`, `Rain at ${fmtH.format(new Date(rain.t))}.`) : t(`Lloverá el ${fmtD.format(new Date(rain.t))}.`, `Rain on ${fmtD.format(new Date(rain.t))}.`))
-    else out.push(t(`Sin lluvia en ${c.days} días.`, `No rain for ${c.days} days.`))
-    const today = dayKey(c.now)
-    const tomorrowKey = dayKey(c.now + 86400000)
-    const todayMax = Math.max(...c.hours.filter((h) => dayKey(h.t) === today).map((h) => h.temp), c.temp)
-    const tom = c.hours.filter((h) => dayKey(h.t) === tomorrowKey)
-    if (tom.length > 12) {
-        const tMax = Math.round(Math.max(...tom.map((h) => h.temp)))
-        const diff = tMax - Math.round(todayMax)
-        out.push(diff >= 3 ? t(`Mañana sube a ${tMax}°.`, `Warmer tomorrow: ${tMax}°.`) : diff <= -3 ? t(`Mañana baja a ${tMax}°.`, `Cooler tomorrow: ${tMax}°.`) : t(`Mañana, parecido.`, `Similar tomorrow.`))
-    }
-    const windy = c.hours.find((h) => h.t > c.now && (h.wind ?? 0) >= 40)
-    if (windy) out.push(t(`Viento fuerte el ${fmtD.format(new Date(windy.t))}.`, `Strong wind on ${fmtD.format(new Date(windy.t))}.`))
-    const nextSun = c.suns.find((s) => s.t > c.now)
-    if (nextSun) out.push(nextSun.rise ? t(`Amanece a las ${fmtH.format(new Date(nextSun.t))}.`, `Sunrise at ${fmtH.format(new Date(nextSun.t))}.`) : t(`El sol se pone a las ${fmtH.format(new Date(nextSun.t))}.`, `Sunset at ${fmtH.format(new Date(nextSun.t))}.`))
-    return out
-}
-
-function frase(estilo: Estilo, c: FraseCtx, propia: string, estado: string): { main: string; sub?: string } {
-    const salt = c.sit.length
-    if (estilo === "propia") return { main: propia || "Escribe tu frase en el panel." }
-    if (estilo === "minimo") {
-        return { main: t(`${estado}. Se nota ${Math.round(c.feels)}°.`, `${estado}. Feels like ${Math.round(c.feels)}°.`) }
-    }
-    if (estilo === "practico") {
-        const l = consejos(c)
-        return { main: l[0] }
-    }
-    if (estilo === "loQueViene") {
-        const l = loQueViene(c)
-        return { main: l[0] }
-    }
-    const set = estilo === "poetico" ? FRASES.poetico : estilo === "humor" ? FRASES.humor : FRASES.clasico
-    const main = pickRot(set[c.sit], c.now, salt)
-    if (estilo === "mezcla") return { main: consejos(c)[0] ?? main }
-    return { main }
-}
-
 // ---------------- Opciones ----------------
 export type Props = {
     cityId: string
     baseUrl: string
     days: number
     hourHeight: number
-    showHeader: boolean
     showWind: boolean
     showRain: boolean
     showClouds: boolean
@@ -611,7 +446,6 @@ export type Props = {
     showScore: boolean
     showModels: boolean
     idioma: "auto" | "es" | "en"
-    showPhrase: boolean
     bgColor: string
     inkColor: string
     softColor: string
@@ -626,14 +460,11 @@ export type Props = {
     blur: number
     grain: number
     texture: "puntos" | "grano" | "nada"
-    sphereBlur: number
     /** dónde va el cielo animado: dentro de la tarjeta, fuera (lo pinta la pieza TiempoFondo detrás de la página) o ninguno */
     cielo: "tarjeta" | "fuera" | "no"
     /** fondo de la tarjeta: su color, cristal (translúcido con desenfoque, deja ver el cielo) o nada */
     fondo: "color" | "cristal" | "transparente"
     showFeels: boolean
-    phraseStyle: Estilo
-    customPhrase: string
     showAlerts: boolean
     theme: "auto" | "claro" | "oscuro"
     windMax: number
@@ -646,7 +477,6 @@ export const DEFAULTS: Props = {
     baseUrl: BASE,
     days: 7,
     hourHeight: 9,
-    showHeader: true,
     showWind: true,
     showRain: true,
     showClouds: true,
@@ -655,7 +485,6 @@ export const DEFAULTS: Props = {
     showScore: true,
     showModels: true,
     idioma: "auto" as const,
-    showPhrase: false,
     bgColor: "#f5efe3",
     inkColor: "#1d1a17",
     softColor: "#8a7f72",
@@ -670,12 +499,9 @@ export const DEFAULTS: Props = {
     blur: 10,
     grain: 0.6,
     texture: "puntos" as const,
-    sphereBlur: 4,
     cielo: "tarjeta",
     fondo: "color",
     showFeels: true,
-    phraseStyle: "practico" as Estilo,
-    customPhrase: "",
     showAlerts: true,
     theme: "auto" as const,
     windMax: 50,
@@ -699,10 +525,10 @@ type Sky = "sol" | "nubes" | "lluvia" | "noche"
  *      suaves; con rachas aceleran; si pasas el cursor se apartan;
  *   5. lluvia (o nieve si hace ≤1°) inclinada por el viento, y chispas cálidas que suben con mucho calor.
  */
-export function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur, acento, uid }: { color: string; acento?: string; sky: Sky; cloud: number; wind: number; dir: number | null; temp: number; dark: boolean; ink: string; nubesBlur: number; uid: string }) {
+export function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, acento, uid }: { color: string; acento?: string; sky: Sky; cloud: number; wind: number; dir: number | null; temp: number; dark: boolean; ink: string; uid: string }) {
     const ref = useRef<HTMLDivElement>(null)
-    const cfg = useRef({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur, acento })
-    cfg.current = { color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur, acento }
+    const cfg = useRef({ color, sky, cloud, wind, dir, temp, dark, ink, acento })
+    cfg.current = { color, sky, cloud, wind, dir, temp, dark, ink, acento }
     useEffect(() => {
         const box = ref.current
         if (!box) return
@@ -715,11 +541,14 @@ export function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur
         if (!g || !e) return
         const quieto = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches
         let W = 1, H = 1, dpr = 1
+        const BAJA = 0.6
         const tam = () => {
             const r = box.getBoundingClientRect()
             W = Math.max(1, r.width); H = Math.max(1, r.height)
-            dpr = Math.min(W * H > 600000 ? 1 : 2, (typeof devicePixelRatio !== "undefined" && devicePixelRatio) || 1)
-            for (const cv of [fondo, estela]) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr) }
+            dpr = Math.min(1.5, (typeof devicePixelRatio !== "undefined" && devicePixelRatio) || 1)
+            // el fondo es todo luz difuminada: con poco más de medio píxel por píxel basta (4-6 veces menos trabajo)
+            fondo.width = Math.round(W * BAJA); fondo.height = Math.round(H * BAJA)
+            estela.width = Math.round(W * dpr); estela.height = Math.round(H * dpr)
         }
         tam()
         const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(tam) : null
@@ -752,9 +581,23 @@ export function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur
             return [c.color, extra[0], extra[1], noche]
         }
         let t0 = performance.now(), raf = 0, tt = rnd() * 100
+        // colores del viento ya calculados (una vez por velocidad redondeada)
+        const tintas = new Map<string, number[]>()
+        const tinta = (kmh: number, c: typeof cfg.current) => {
+            const k = `${Math.round(kmh)}|${c.dark ? 1 : 0}|${c.acento}|${c.ink}`
+            let v = tintas.get(k)
+            if (!v) {
+                v = hexRgb(c.dark ? wcol(kmh, c.acento) : mix(wcol(kmh, c.acento), c.ink, 0.25))
+                if (tintas.size > 400) tintas.clear()
+                tintas.set(k, v)
+            }
+            return v
+        }
         const frame = (now: number) => {
             raf = 0
-            const dt = Math.min(0.05, Math.max(0.001, (now - t0) / 1000)); t0 = now; tt += dt
+            // como mucho 30 fotogramas por segundo: se ve igual de suave y cuesta la mitad
+            if (now - t0 < 31 && !quieto) { if (visible) raf = requestAnimationFrame(frame); return }
+            const dt = Math.min(0.06, Math.max(0.001, (now - t0) / 1000)); t0 = now; tt += dt
             const c = cfg.current
             const d = ((c.dir ?? 270) * Math.PI) / 180
             const ux = -Math.sin(d), uy = Math.cos(d) // hacia dónde va el viento
@@ -764,7 +607,7 @@ export function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur
             const D = Math.max(W, H)
 
             // ---- capa de fondo ----
-            g.setTransform(dpr, 0, 0, dpr, 0, 0)
+            g.setTransform(BAJA, 0, 0, BAJA, 0, 0)
             g.globalCompositeOperation = "source-over"
             g.clearRect(0, 0, W, H)
             // 1. aurora
@@ -811,7 +654,6 @@ export function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur
             }
             // 3. nubes en dos capas
             const nN = Math.round(Math.min(1, c.cloud * 1.1) * nubes.length)
-            g.filter = c.nubesBlur > 0 ? `blur(${c.nubesBlur}px)` : "none"
             const tono = c.sky === "lluvia" ? (c.dark ? "#5d6679" : "#8e98ab") : c.dark ? "#cfd5e2" : "#ffffff"
             for (let i = 0; i < nN; i++) {
                 const n = nubes[i]
@@ -829,7 +671,6 @@ export function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur
                     g.fillStyle = s; g.fillRect(cx - R * rr, cy - R * rr, R * rr * 2, R * rr * 2)
                 }
             }
-            g.filter = "none"
             // 5a. calor: chispas que suben
             if (c.temp >= 26) {
                 const k = Math.min(1, (c.temp - 26) / 10)
@@ -889,10 +730,10 @@ export function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur
                 p.vida += dt * 0.35
                 const a = Math.min(1, p.vida * 3) * Math.min(1, (1.6 - p.vida) * 2)
                 if (a > 0) {
-                    const wc = c.dark ? wcol(kmh, c.acento) : mix(wcol(kmh, c.acento), c.ink, 0.25)
+                    const [r0, g0, b0] = tinta(kmh, c)
                     // debajo del número, más calma: así se lee bien la temperatura
                     const calma = 0.3 + 0.7 * Math.min(1, Math.max(0, (X / W - 0.12) / 0.5))
-                    e.strokeStyle = col(wc, (c.dark ? 0.7 : 0.62) * a * calma * (0.5 + 0.5 * Math.min(1, m)))
+                    e.strokeStyle = `rgba(${r0},${g0},${b0},${((c.dark ? 0.7 : 0.62) * a * calma * (0.5 + 0.5 * Math.min(1, m))).toFixed(3)})`
                     e.lineWidth = p.s * (0.7 + 0.6 * m)
                     e.beginPath(); e.moveTo(X, Y); e.lineTo(nx, ny); e.stroke()
                 }
@@ -901,7 +742,8 @@ export function Cielo({ color, sky, cloud, wind, dir, temp, dark, ink, nubesBlur
             }
             if (!quieto && visible) raf = requestAnimationFrame(frame)
         }
-        frame(performance.now() + 16)
+        t0 = performance.now() - 40 // el primer fotograma se pinta ya
+        frame(performance.now())
         return () => {
             cancelAnimationFrame(raf); ro?.disconnect(); io?.disconnect()
             window.removeEventListener("pointermove", mover); document.removeEventListener("pointerleave", salir)
@@ -1048,13 +890,8 @@ export function useTiempo(props: Partial<Props>) {
         baseUrl,
         days,
         hourHeight,
-        showHeader,
-        showWind,
-        showRain,
         showClouds,
         showAI,
-        showSpread,
-        showScore,
         bgColor: bgP,
         inkColor: inkP,
         softColor: softP,
@@ -1062,18 +899,7 @@ export function useTiempo(props: Partial<Props>) {
         tempMild,
         tempWarm,
         tempHot,
-        windColor,
-        rainColor,
         cloudColor: cloudP,
-        lineWidth,
-        blur,
-        grain,
-        texture,
-        sphereBlur,
-        showFeels,
-        phraseStyle,
-        customPhrase,
-        showAlerts,
         theme,
         windMax,
         radius,
@@ -1154,7 +980,6 @@ export function useTiempo(props: Partial<Props>) {
 
     const hours = useMemo(() => (doc ? buildHours(doc, Math.round(days * 24)) : []), [doc, days])
     const tz = doc?.city.tz ?? "Europe/Madrid"
-
 
     const box = { background: bgColor, color: inkColor, borderRadius: radius, overflow: "hidden" as const, fontFamily: SANS, width: "100%" }
     const base = { p, ref, uid, W, dark, toggleTheme, bgColor, inkColor, softColor, cloudColor, gridColor, box, doc, err }
@@ -1350,7 +1175,6 @@ export function useTiempo(props: Partial<Props>) {
         CG = 7
     const cx0 = W - CLOUD_W + (CLOUD_W - (cols.length * CW + (cols.length - 1) * CG)) / 2
 
-
     const lab = { fontFamily: MONO, fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase" as const, color: softColor }
     // etiqueta con el color de su dato, como en la referencia de IBM
     const labC = (c: string) => ({ ...lab, color: dark ? mix(c, "#ffffff", 0.25) : mix(c, inkColor, 0.4) })
@@ -1360,13 +1184,7 @@ export function useTiempo(props: Partial<Props>) {
     const cloudNow = (h0.cloud ?? mean([h0.lo, h0.mid, h0.hi]) ?? 30) / 100
     const sky: Sky = now.rain >= 0.3 ? "lluvia" : night ? "noche" : cloudNow >= 0.6 ? "nubes" : "sol"
     const stateLabel = now.rain >= 0.3 ? t("Lluvia", "Rain") : cloudNow >= 0.85 ? t("Cubierto", "Overcast") : cloudNow >= 0.6 ? t("Nuboso", "Cloudy") : cloudNow >= 0.25 ? t("Poco nuboso", "Partly cloudy") : KIND_LABEL(sky)
-    // La frase de debajo: según el cielo de ahora, lo que se nota y lo que viene
     const feelsNow = feelsOf(now.temp, now.wind, now.hum)
-    const lowCloud = (h0.lo ?? 0) / 100
-    const sit: Sit =
-        now.rain >= 2 ? "lluvia" : now.rain >= 0.3 ? "llovizna" : (now.hum ?? 0) >= 96 && lowCloud >= 0.8 ? "niebla" : (now.wind ?? 0) >= 40 ? "viento" : !night && feelsNow >= 32 ? "calor" : feelsNow <= 3 ? "frio" : night ? (cloudNow < 0.4 ? "nocheClara" : "nocheNubes") : cloudNow >= 0.85 ? "cubierto" : cloudNow >= 0.6 ? "nuboso" : cloudNow >= 0.25 ? "pocas" : "sol"
-    const fr = frase(phraseStyle, { sit, now: Date.now(), tz, temp: now.temp, feels: feelsNow, wind: now.wind, hum: now.hum, night, hours, suns, days }, customPhrase, stateLabel)
-    const phrase = fr.main
     const today = groups[0]?.list ?? []
     const todayMax = today.length ? Math.round(Math.max(now.temp, ...today.map((h) => h.temp))) : null,
         todayMin = today.length ? Math.round(Math.min(now.temp, ...today.map((h) => h.temp))) : null
@@ -1374,32 +1192,18 @@ export function useTiempo(props: Partial<Props>) {
     const css = `
         @keyframes ${uid}-nudge { 0%,100% { transform: translateY(1.5px); opacity: .55 } 50% { transform: translateY(-1.5px); opacity: 1 } }
         @keyframes ${uid}-fall { from { background-position: 0 0 } to { background-position: -5px 24px } }
-        @keyframes ${uid}-drift { 0%,100% { transform: translateY(-3px) } 50% { transform: translateY(3px) } }
         @keyframes ${uid}-pulse { 0% { transform: scale(1); opacity: .55 } 100% { transform: scale(2.6); opacity: 0 } }
         @keyframes ${uid}-in { from { opacity: 0; transform: translateY(14px); filter: blur(8px) } to { opacity: 1; transform: none; filter: blur(0) } }
         @keyframes ${uid}-orbin { from { opacity: 0 } to { opacity: 1 } }
         @keyframes ${uid}-reveal { from { clip-path: inset(0 0 100% 0) } to { clip-path: inset(0 0 0 0) } }
         @keyframes ${uid}-draw { from { stroke-dashoffset: 1 } to { stroke-dashoffset: 0 } }
-        @keyframes ${uid}-spinK { to { transform: rotate(360deg) } }
-        @keyframes ${uid}-breathK { 0%,100% { opacity: .55; transform: scale(1) } 50% { opacity: .9; transform: scale(1.06) } }
-        @keyframes ${uid}-twK { 0%,100% { opacity: .2 } 50% { opacity: 1 } }
-        @keyframes ${uid}-flowK { from { transform: translateX(-50%) } to { transform: translateX(0) } }
-        @keyframes ${uid}-sdriftK { from { transform: translateX(-35%) } to { transform: translateX(35%) } }
-        @keyframes ${uid}-srainK { from { transform: translate3d(0,-30%,0) } to { transform: translate3d(-6%,30%,0) } }
         .${uid}-in { animation: ${uid}-in 1s cubic-bezier(.2,.8,.2,1) both }
         .${uid}-orb { animation: ${uid}-orbin 1.8s cubic-bezier(.16,1,.3,1) both }
         .${uid}-strip { animation: ${uid}-reveal 2.6s cubic-bezier(.65,0,.15,1) .5s both }
         .${uid}-draw { stroke-dasharray: 1; animation: ${uid}-draw 3s cubic-bezier(.65,0,.15,1) .5s both }
-        .${uid}-ring { transform-box: fill-box; transform-origin: center; animation: ${uid}-pulse 2.4s ease-out infinite }
-        .${uid}-spin { animation: ${uid}-spinK 30s linear infinite }
-        .${uid}-breath { animation: ${uid}-breathK 6s ease-in-out infinite }
-        .${uid}-tw { animation: ${uid}-twK 3s ease-in-out infinite }
-        .${uid}-flow { animation: ${uid}-flowK 9s linear infinite }
-        .${uid}-sdrift { animation: ${uid}-sdriftK 20s ease-in-out infinite alternate }
-        .${uid}-srain { animation: ${uid}-srainK .7s linear infinite }
+        .${uid}-ring { will-change: transform, opacity; animation: ${uid}-pulse 2.4s ease-out infinite }
         .${uid}-arrow { animation: ${uid}-nudge 2.4s ease-in-out infinite }
         .${uid}-rain { animation: ${uid}-fall .9s linear infinite }
-        .${uid}-cloud { animation: ${uid}-drift 6s ease-in-out infinite }
         ${animate ? "" : `[class^="${uid}-"] { animation: none !important }`}
         @media (prefers-reduced-motion: reduce) { [class^="${uid}-"] { animation: none !important } }
     `
@@ -1408,7 +1212,7 @@ export function useTiempo(props: Partial<Props>) {
         ...base,
         ready: true as const,
         doc,
-        CG, CLOUD_W, CW, G, H, PAD_B, PAD_T, RW, RX, X0, X1, aiEnd, aiOn, alerts, arrows, cloudNow, cols, css, cx0, dayKey, dayLight, dayStarts, dec, fLine, fPts, feels, feelsLevel, feelsNow, fmtDay, fmtHour, fmtRange, fmtWd, fr, fresh, gradStops, groups, h0, hasLayers, hours, lab, labC, lat, lon, lowCloud, maeIa, maeMed, marks, night, now, nowCol, phrase, pushRun, rainDays, rainProbOf, rainRuns, rec, sit, sky, stateLabel, sunMarks, suns, tArea, tLine, tMax, tMin, tPts, tStops, tcol, today, todayMax, todayMin, tx, tz, wArea, wLine, wPts, wScale, windHours, windPeaks, wx, y, yEnd,
+        CG, CLOUD_W, CW, G, H, PAD_B, PAD_T, RW, RX, X0, X1, aiEnd, aiOn, alerts, arrows, cloudNow, cols, css, cx0, dayKey, dayLight, dayStarts, dec, fLine, fPts, feels, feelsLevel, feelsNow, fmtDay, fmtHour, fmtRange, fmtWd, fresh, gradStops, groups, h0, hasLayers, hours, lab, labC, lat, lon, maeIa, maeMed, marks, night, now, nowCol, pushRun, rainDays, rainProbOf, rainRuns, rec, sky, stateLabel, sunMarks, suns, tArea, tLine, tMax, tMin, tPts, tStops, tcol, today, todayMax, todayMin, tx, tz, wArea, wLine, wPts, wScale, windHours, windPeaks, wx, y, yEnd,
     }
 }
 export type Vista = Extract<ReturnType<typeof useTiempo>, { ready: true }>
@@ -1442,14 +1246,14 @@ export function CieloFondo({ v, fundido }: { v: Vista; fundido: number }) {
     const m = fundido > 0 ? `linear-gradient(#000 ${100 - fundido}%, transparent)` : undefined
     return (
         <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", WebkitMaskImage: m, maskImage: m }}>
-            <Cielo color={v.nowCol} sky={v.sky} cloud={v.cloudNow} wind={v.now.wind ?? 0} dir={v.now.dir} temp={v.now.temp} dark={v.dark} ink={v.inkColor} nubesBlur={v.p.sphereBlur} acento={v.p.windColor} uid={v.uid} />
+            <Cielo color={v.nowCol} sky={v.sky} cloud={v.cloudNow} wind={v.now.wind ?? 0} dir={v.now.dir} temp={v.now.temp} dark={v.dark} ink={v.inkColor} acento={v.p.windColor} uid={v.uid} />
         </div>
     )
 }
 
 export function SeccionAhora({ v }: { v: Vista }) {
-    const { p, CG, CLOUD_W, CW, G, H, PAD_B, PAD_T, RW, RX, X0, X1, aiEnd, aiOn, alerts, arrows, cloudNow, cols, css, cx0, dayKey, dayLight, dayStarts, dec, fLine, fPts, feels, feelsLevel, feelsNow, fmtDay, fmtHour, fmtRange, fmtWd, fr, fresh, gradStops, groups, h0, hasLayers, hours, lab, labC, lat, lon, lowCloud, maeIa, maeMed, marks, night, now, nowCol, phrase, pushRun, rainDays, rainProbOf, rainRuns, rec, sit, sky, stateLabel, sunMarks, suns, tArea, tLine, tMax, tMin, tPts, tStops, tcol, today, todayMax, todayMin, tx, tz, wArea, wLine, wPts, wScale, windHours, windPeaks, wx, y, yEnd, uid, W, dark, toggleTheme, bgColor, inkColor, softColor, cloudColor, gridColor, doc } = v
-    const { cityId, baseUrl, days, hourHeight, showHeader, showWind, showRain, showClouds, showAI, showSpread, showScore, tempCold, tempMild, tempWarm, tempHot, windColor, rainColor, lineWidth, blur, grain, texture, sphereBlur, showFeels, phraseStyle, customPhrase, showAlerts, theme, windMax, radius, animate } = p
+    const { p, aiEnd, aiOn, cloudNow, dec, fmtHour, fmtWd, maeIa, maeMed, now, nowCol, sky, stateLabel, todayMax, todayMin, uid, W, dark, toggleTheme, bgColor, inkColor, softColor, doc } = v
+    const { tempMild, windColor, animate } = p
     const [iaOpen, setIaOpen] = useState(false)
     return (
         <>
@@ -1458,7 +1262,7 @@ export function SeccionAhora({ v }: { v: Vista }) {
                         <>
                         {/* el cielo va de fondo de toda la tarjeta, de borde a borde (se funde abajo si la tarjeta es muy alta) */}
                         <div aria-hidden className={`${uid}-orb`} style={{ position: "absolute", top: 0, left: 0, right: 0, height: "100%", maxHeight: 820, zIndex: -1, pointerEvents: "none", WebkitMaskImage: "linear-gradient(#000 70%, transparent)", maskImage: "linear-gradient(#000 70%, transparent)" }}>
-                            <Cielo color={nowCol} sky={sky} cloud={cloudNow} wind={now.wind ?? 0} dir={now.dir} temp={now.temp} dark={dark} ink={inkColor} nubesBlur={sphereBlur} acento={windColor} uid={uid} />
+                            <Cielo color={nowCol} sky={sky} cloud={cloudNow} wind={now.wind ?? 0} dir={now.dir} temp={now.temp} dark={dark} ink={inkColor} acento={windColor} uid={uid} />
                         </div>
                         </>
                     )}
@@ -1520,12 +1324,6 @@ export function SeccionAhora({ v }: { v: Vista }) {
                                 )}
                             </div>
                         )}
-                        {/* la frase de debajo (apagada por defecto: control «Frase») */}
-                        {p.showPhrase && (
-                        <div className={`${uid}-in`} style={{ fontFamily: SANS, fontWeight: 500, fontSize: Math.round(Math.min(phrase.length > 34 ? 25 : 31, W * (phrase.length > 34 ? 0.066 : 0.08))), lineHeight: 1.12, letterSpacing: "-0.025em", marginTop: 8, maxWidth: phrase.length > 34 ? "92%" : "78%", animationDelay: "340ms", textWrap: "balance" as any }}>
-                                {phrase}
-                            </div>
-                        )}
                 </div>
             </div>
         </>
@@ -1533,8 +1331,8 @@ export function SeccionAhora({ v }: { v: Vista }) {
 }
 
 export function SeccionAvisos({ v }: { v: Vista }) {
-    const { p, CG, CLOUD_W, CW, G, H, PAD_B, PAD_T, RW, RX, X0, X1, aiEnd, aiOn, alerts, arrows, cloudNow, cols, css, cx0, dayKey, dayLight, dayStarts, dec, fLine, fPts, feels, feelsLevel, feelsNow, fmtDay, fmtHour, fmtRange, fmtWd, fr, fresh, gradStops, groups, h0, hasLayers, hours, lab, labC, lat, lon, lowCloud, maeIa, maeMed, marks, night, now, nowCol, phrase, pushRun, rainDays, rainProbOf, rainRuns, rec, sit, sky, stateLabel, sunMarks, suns, tArea, tLine, tMax, tMin, tPts, tStops, tcol, today, todayMax, todayMin, tx, tz, wArea, wLine, wPts, wScale, windHours, windPeaks, wx, y, yEnd, uid, W, dark, toggleTheme, bgColor, inkColor, softColor, cloudColor, gridColor, doc } = v
-    const { cityId, baseUrl, days, hourHeight, showHeader, showWind, showRain, showClouds, showAI, showSpread, showScore, tempCold, tempMild, tempWarm, tempHot, windColor, rainColor, lineWidth, blur, grain, texture, sphereBlur, showFeels, phraseStyle, customPhrase, showAlerts, theme, windMax, radius, animate } = p
+    const { p, alerts, fmtRange, uid, dark, inkColor, softColor } = v
+    const { days } = p
     return (
         <>
             <div style={{ padding: "0 20px" }}>
@@ -1559,8 +1357,8 @@ export function SeccionAvisos({ v }: { v: Vista }) {
 }
 
 export function SeccionDatos({ v }: { v: Vista }) {
-    const { p, CG, CLOUD_W, CW, G, H, PAD_B, PAD_T, RW, RX, X0, X1, aiEnd, aiOn, alerts, arrows, cloudNow, cols, css, cx0, dayKey, dayLight, dayStarts, dec, fLine, fPts, feels, feelsLevel, feelsNow, fmtDay, fmtHour, fmtRange, fmtWd, fr, fresh, gradStops, groups, h0, hasLayers, hours, lab, labC, lat, lon, lowCloud, maeIa, maeMed, marks, night, now, nowCol, phrase, pushRun, rainDays, rainProbOf, rainRuns, rec, sit, sky, stateLabel, sunMarks, suns, tArea, tLine, tMax, tMin, tPts, tStops, tcol, today, todayMax, todayMin, tx, tz, wArea, wLine, wPts, wScale, windHours, windPeaks, wx, y, yEnd, uid, W, dark, toggleTheme, bgColor, inkColor, softColor, cloudColor, gridColor, doc } = v
-    const { cityId, baseUrl, days, hourHeight, showHeader, showWind, showRain, showClouds, showAI, showSpread, showScore, tempCold, tempMild, tempWarm, tempHot, windColor, rainColor, lineWidth, blur, grain, texture, sphereBlur, showFeels, phraseStyle, customPhrase, showAlerts, theme, windMax, radius, animate } = p
+    const { p, feelsLevel, labC, now, nowCol, uid, inkColor, softColor } = v
+    const { windColor, rainColor, showFeels } = p
     return (
         <>
             <div style={{ padding: "0 20px 10px" }}>
@@ -1591,8 +1389,8 @@ export function SeccionDatos({ v }: { v: Vista }) {
 }
 
 export function SeccionGrafico({ v }: { v: Vista }) {
-    const { p, CG, CLOUD_W, CW, G, H, PAD_B, PAD_T, RW, RX, X0, X1, aiEnd, aiOn, alerts, arrows, cloudNow, cols, css, cx0, dayKey, dayLight, dayStarts, dec, fLine, fPts, feels, feelsLevel, feelsNow, fmtDay, fmtHour, fmtRange, fmtWd, fr, fresh, gradStops, groups, h0, hasLayers, hours, lab, labC, lat, lon, lowCloud, maeIa, maeMed, marks, night, now, nowCol, phrase, pushRun, rainDays, rainProbOf, rainRuns, rec, sit, sky, stateLabel, sunMarks, suns, tArea, tLine, tMax, tMin, tPts, tStops, tcol, today, todayMax, todayMin, tx, tz, wArea, wLine, wPts, wScale, windHours, windPeaks, wx, y, yEnd, uid, W, dark, toggleTheme, bgColor, inkColor, softColor, cloudColor, gridColor, doc } = v
-    const { cityId, baseUrl, days, hourHeight, showHeader, showWind, showRain, showClouds, showAI, showSpread, showScore, tempCold, tempMild, tempWarm, tempHot, windColor, rainColor, lineWidth, blur, grain, texture, sphereBlur, showFeels, phraseStyle, customPhrase, showAlerts, theme, windMax, radius, animate } = p
+    const { p, CG, CLOUD_W, CW, G, H, PAD_T, RW, RX, X0, X1, aiEnd, aiOn, alerts, arrows, cols, cx0, dayLight, fmtDay, fmtHour, fmtWd, gradStops, groups, hours, marks, rainDays, rainRuns, sunMarks, tArea, tLine, tPts, tcol, tx, tz, wArea, wLine, windHours, windPeaks, wx, y, yEnd, uid, W, dark, bgColor, inkColor, softColor, cloudColor, gridColor, doc } = v
+    const { hourHeight, showWind, showRain, showClouds, showAI, showSpread, tempCold, tempMild, tempWarm, tempHot, windColor, rainColor, lineWidth, blur, grain, texture, showAlerts } = p
     const [verModelos, setVerModelos] = useState(false)
     const [iaDia, setIaDia] = useState<string | null>(null) // el día cuyo «por qué» está abierto
     // Cada modelo por separado: una línea gris fina (tramos sin hueco, un punto cada 2 h)
@@ -1697,7 +1495,6 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                         <line key={g.key} x1={0} x2={W} y1={y(g.start)} y2={y(g.start)} stroke={`url(#${uid}-dayline)`} strokeWidth={1} />
                     ))}
 
-
                     {/* los modelos por separado: líneas grises finas, debajo de la temperatura */}
                     {modelLines.map((m) => (
                         <path key={`ml${m.id}`} d={m.d} fill="none" stroke={rgba(softColor, dark ? 0.55 : 0.5)} strokeWidth={0.8} strokeLinecap="round" strokeLinejoin="round" />
@@ -1748,7 +1545,7 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                                         </linearGradient>
                                     </defs>
                                     <line x1={x + CW / 2} x2={x + CW / 2} y1={PAD_T - 4} y2={yEnd + 4} stroke={rgba(softColor, 0.25)} strokeWidth={1} strokeDasharray="1 3" />
-                                    <rect className={`${uid}-cloud`} x={x - 5} y={PAD_T} width={CW + 10} height={yEnd - PAD_T} rx={CW} fill={`url(#${id})`} filter={`url(#${uid}-soft)`} style={{ animationDelay: `${ci * -2}s` }} />
+                                    <rect x={x - 5} y={PAD_T} width={CW + 10} height={yEnd - PAD_T} rx={CW} fill={`url(#${id})`} filter={`url(#${uid}-soft)`} />
                                     <rect x={x + 2} y={PAD_T} width={CW - 4} height={yEnd - PAD_T} rx={CW / 2} fill={`url(#${id})`} opacity={dark ? 0.6 : 0.95} />
                                 </g>
                             )
@@ -1756,8 +1553,9 @@ export function SeccionGrafico({ v }: { v: Vista }) {
 
                     {/* ahora: un punto al principio de la curva */}
                     <circle cx={tPts[0][0]} cy={tPts[0][1]} r={5} fill={inkColor} />
-                    <circle className={`${uid}-ring`} cx={tPts[0][0]} cy={tPts[0][1]} r={6} fill="none" stroke={inkColor} strokeWidth={1} />
                 </svg>
+                {/* el anillo que late alrededor de «ahora», fuera del SVG (así no obliga a repintar todo el gráfico) */}
+                <span className={`${uid}-ring`} style={{ position: "absolute", left: tPts[0][0] - 6, top: tPts[0][1] - 6, width: 12, height: 12, borderRadius: 6, border: `1px solid ${inkColor}`, pointerEvents: "none" }} />
 
                 {/* lluvia: una franja de lado a lado en las horas en que llueve, con gotas que caen (más fuerte, más intensa) */}
                 {showRain &&
@@ -1970,8 +1768,8 @@ export function SeccionGrafico({ v }: { v: Vista }) {
 }
 
 export function SeccionAcierto({ v }: { v: Vista }) {
-    const { p, CG, CLOUD_W, CW, G, H, PAD_B, PAD_T, RW, RX, X0, X1, aiEnd, aiOn, alerts, arrows, cloudNow, cols, css, cx0, dayKey, dayLight, dayStarts, dec, fLine, fPts, feels, feelsLevel, feelsNow, fmtDay, fmtHour, fmtRange, fmtWd, fr, fresh, gradStops, groups, h0, hasLayers, hours, lab, labC, lat, lon, lowCloud, maeIa, maeMed, marks, night, now, nowCol, phrase, pushRun, rainDays, rainProbOf, rainRuns, rec, sit, sky, stateLabel, sunMarks, suns, tArea, tLine, tMax, tMin, tPts, tStops, tcol, today, todayMax, todayMin, tx, tz, wArea, wLine, wPts, wScale, windHours, windPeaks, wx, y, yEnd, uid, W, dark, toggleTheme, bgColor, inkColor, softColor, cloudColor, gridColor, doc } = v
-    const { cityId, baseUrl, days, hourHeight, showHeader, showWind, showRain, showClouds, showAI, showSpread, showScore, tempCold, tempMild, tempWarm, tempHot, windColor, rainColor, lineWidth, blur, grain, texture, sphereBlur, showFeels, phraseStyle, customPhrase, showAlerts, theme, windMax, radius, animate } = p
+    const { p, fmtDay, fmtWd, rec, inkColor, softColor } = v
+    const { showAI, showScore, tempMild } = p
     return (
         <>
             {showAI && showScore && rec.station && (

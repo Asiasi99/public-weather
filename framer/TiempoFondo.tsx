@@ -26,7 +26,6 @@ export default function TiempoFondo(props: Partial<Props> & { fundido?: number }
 addPropertyControls(TiempoFondo, {
     cityId: { type: ControlType.String, title: "Ciudad", defaultValue: "global", placeholder: "global o madrid, sevilla…" },
     fundido: { type: ControlType.Number, title: "Fundido abajo", min: 0, max: 80, step: 5, unit: "%", defaultValue: 35 },
-    sphereBlur: { type: ControlType.Number, title: "Difuminado nubes", min: 0, max: 12, step: 0.5, defaultValue: 4 },
     windColor: { type: ControlType.Color, title: "Color viento", defaultValue: "#e0248a" },
     theme: { type: ControlType.Enum, title: "Tema", options: ["auto", "claro", "oscuro"], optionTitles: ["Auto", "Claro", "Oscuro"], defaultValue: "auto", displaySegmentedControl: true },
 })

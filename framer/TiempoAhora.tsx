@@ -1,5 +1,5 @@
 /**
- * TiempoAhora — una pieza del tiempo: el cielo animado, la temperatura en grande, el estado con la etiqueta ✦ IA y la frase.
+ * TiempoAhora — una pieza del tiempo: el cielo animado, la temperatura en grande y el estado con la etiqueta ✦ IA.
  * Usa la ciudad «global» (la que elige SelectorCiudad) o la que pongas en el panel. El tema claro/oscuro es común a todas las piezas.
  */
 import { addPropertyControls, ControlType } from "framer"
@@ -23,17 +23,6 @@ addPropertyControls(TiempoAhora, {
     cityId: { type: ControlType.String, title: "Ciudad", defaultValue: "global", placeholder: "global o madrid, sevilla…" },
     fondo: { type: ControlType.Enum, title: "Fondo", options: ["color", "cristal", "transparente"], optionTitles: ["Color", "Cristal", "Nada"], defaultValue: "color", displaySegmentedControl: true },
     cielo: { type: ControlType.Enum, title: "Cielo", options: ["tarjeta", "fuera", "no"], optionTitles: ["Tarjeta", "Fuera", "No"], defaultValue: "tarjeta", displaySegmentedControl: true },
-    sphereBlur: { type: ControlType.Number, title: "Difuminado nubes", hidden: (p: any) => p.cielo !== "tarjeta", min: 0, max: 12, step: 0.5, defaultValue: 4 },
-    showPhrase: { type: ControlType.Boolean, title: "Frase", defaultValue: false },
-    phraseStyle: {
-        type: ControlType.Enum,
-        title: "Tipo de frase",
-        options: ["practico", "mezcla", "loQueViene", "clasico", "poetico", "humor", "minimo", "propia"],
-        optionTitles: ["Consejos", "Frase + consejo", "Lo que viene", "Clásica", "Poética", "Con humor", "Mínima (datos)", "Escribo yo"],
-        defaultValue: "practico",
-        hidden: (p: any) => !p.showPhrase,
-    },
-    customPhrase: { type: ControlType.String, title: "Tu frase", defaultValue: "", placeholder: "Escribe aquí…", hidden: (p: any) => p.phraseStyle !== "propia" },
     showAI: { type: ControlType.Boolean, title: "Etiquetas IA", defaultValue: true },
     idioma: { type: ControlType.Enum, title: "Idioma", options: ["auto", "es", "en"], optionTitles: ["Auto", "Español", "English"], defaultValue: "auto", displaySegmentedControl: true },
     theme: { type: ControlType.Enum, title: "Tema", options: ["auto", "claro", "oscuro"], optionTitles: ["Auto", "Claro", "Oscuro"], defaultValue: "auto", displaySegmentedControl: true },

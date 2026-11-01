@@ -12,7 +12,6 @@ import { BASE, hexRgb, MONO, mix, rgba, SANS, scale, setIdioma, t, uR, uRL, uT, 
 type Indice = { res: number; lat: number[]; lon: number[]; steps: string[] }
 type Paso = { t: string; temp: (number | null)[]; rain: (number | null)[]; wind: (number | null)[]; dir: (number | null)[] }
 type Capa = "temp" | "lluvia" | "viento"
-type CityInfo = { id: string; name: string; lat: number; lon: number }
 
 const ZONAS: { id: string; es: string; en: string; box: [number, number, number, number] }[] = [
     { id: "pf", es: "Península y Francia", en: "Iberia & France", box: [-10.2, 35.4, 9.9, 51.4] },
@@ -517,12 +516,12 @@ export default function TiempoMapa(props: Partial<Props>) {
         if (!cv || !particulas || !idx) return
         const ctx = cv.getContext("2d")
         if (!ctx) return
-        const dpr = typeof window !== "undefined" ? Math.min(2, window.devicePixelRatio || 1) : 1
+        const dpr = typeof window !== "undefined" ? Math.min(1.5, window.devicePixelRatio || 1) : 1
         cv.width = Math.round(W * dpr)
         cv.height = Math.round(H * dpr)
         const quieto = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches
         const r = idx.res
-        const N = Math.round(Math.min(1400, (W * H) / 260))
+        const N = Math.round(Math.min(800, (W * H) / 380))
         const ps = Array.from({ length: N }, () => ({ x: Math.random() * W, y: Math.random() * H, vida: Math.random() * 3 }))
         const muestra = (x: number, y: number) => {
             const c = campo.current
@@ -540,12 +539,22 @@ export default function TiempoMapa(props: Partial<Props>) {
             return isNaN(u) || isNaN(v) ? null : [u, v, s]
         }
         const color = capa === "viento"
+        // colores ya calculados por velocidad redondeada
+        const tintas = new Map<number, number[]>()
+        const tinta = (kmh: number) => {
+            const k = Math.round(kmh)
+            let v = tintas.get(k)
+            if (!v) tintas.set(k, (v = hexRgb(dark ? wcol(k, windColor) : mix(wcol(k, windColor), "#1d1a17", 0.15))))
+            return v
+        }
         let raf = 0, t0 = performance.now(), visible = true
         const io = typeof IntersectionObserver !== "undefined" ? new IntersectionObserver(([en]) => { visible = en.isIntersecting; if (visible && !raf) raf = requestAnimationFrame(frame) }) : null
         io?.observe(cv)
         const frame = (now: number) => {
             raf = 0
-            const dt = Math.min(0.05, (now - t0) / 1000)
+            // como mucho 30 fotogramas por segundo
+            if (now - t0 < 31 && !quieto) { if (visible) raf = requestAnimationFrame(frame); return }
+            const dt = Math.min(0.06, (now - t0) / 1000)
             t0 = now
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
             ctx.globalCompositeOperation = "destination-out"
@@ -564,14 +573,18 @@ export default function TiempoMapa(props: Partial<Props>) {
                 const [u, v, s] = m
                 const nx = p.x + u * k * dt * 1.6, ny = p.y + v * k * dt * 1.6
                 const a = Math.min(1, p.vida * 2) * Math.min(1, (4 - p.vida) * 2)
-                ctx.strokeStyle = color ? rgba(dark ? wcol(s, windColor) : mix(wcol(s, windColor), "#1d1a17", 0.15), 0.85 * a) : dark ? `rgba(255,255,255,${0.35 * a})` : `rgba(255,255,255,${0.75 * a})`
+                if (color) {
+                    const [r0, g0, b0] = tinta(s)
+                    ctx.strokeStyle = `rgba(${r0},${g0},${b0},${(0.85 * a).toFixed(3)})`
+                } else ctx.strokeStyle = `rgba(255,255,255,${((dark ? 0.35 : 0.75) * a).toFixed(3)})`
                 ctx.lineWidth = color ? 1.3 : 1
                 ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(nx, ny); ctx.stroke()
                 p.x = nx; p.y = ny
             }
             if (!quieto && visible) raf = requestAnimationFrame(frame)
         }
-        frame(performance.now() + 16)
+        t0 = performance.now() - 40
+        frame(performance.now())
         return () => { cancelAnimationFrame(raf); io?.disconnect(); ctx.clearRect(0, 0, cv.width, cv.height) }
     }, [particulas, idx, paso, capa, W, H, dark, windColor, zona])
 
