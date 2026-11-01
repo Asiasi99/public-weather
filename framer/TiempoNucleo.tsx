@@ -1391,7 +1391,7 @@ export function SeccionDatos({ v }: { v: Vista }) {
 
 export function SeccionGrafico({ v }: { v: Vista }) {
     const { p, CG, CLOUD_W, CW, G, H, PAD_T, RW, RX, X0, X1, aiEnd, aiOn, alerts, arrows, cols, cx0, dayLight, fmtDay, fmtHour, fmtWd, gradStops, groups, hours, marks, rainDays, rainRuns, sunMarks, tArea, tLine, tPts, tcol, tx, tz, wArea, wLine, windHours, windPeaks, wx, y, yEnd, uid, W, dark, bgColor, inkColor, softColor, cloudColor, gridColor, doc } = v
-    const { hourHeight, showWind, showRain, showClouds, showAI, showSpread, tempCold, tempMild, tempWarm, tempHot, windColor, rainColor, lineWidth, blur, grain, texture, showAlerts } = p
+    const { days, hourHeight, showWind, showRain, showClouds, showAI, showSpread, tempCold, tempMild, tempWarm, tempHot, windColor, rainColor, lineWidth, blur, grain, texture, showAlerts } = p
     const [verModelos, setVerModelos] = useState(false)
     const [iaDia, setIaDia] = useState<string | null>(null) // el día cuyo «por qué» está abierto
     // Cada modelo por separado: una línea gris fina (tramos sin hueco, un punto cada 2 h)
@@ -1420,6 +1420,24 @@ export function SeccionGrafico({ v }: { v: Vista }) {
     }, [verModelos, doc, hours, W])
     return (
         <>
+            {/* cabecera del gráfico: título y el interruptor para ver cada modelo */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "14px 16px 6px" }}>
+                <span style={{ fontFamily: SANS, fontWeight: 600, fontSize: 14, letterSpacing: "-0.01em", color: inkColor }}>{t(`Próximos ${days} días`, `Next ${days} days`)}</span>
+                {p.showModels && (
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={verModelos}
+                        onClick={() => setVerModelos((v) => !v)}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: 0, border: "none", background: "transparent", cursor: "pointer", fontFamily: SANS, fontSize: 12, color: verModelos ? inkColor : softColor }}
+                    >
+                        {t(`Los ${doc.models.length} modelos`, `All ${doc.models.length} models`)}
+                        <span style={{ position: "relative", width: 30, height: 18, borderRadius: 9, background: verModelos ? inkColor : rgba(softColor, 0.3), transition: "background .25s" }}>
+                            <span style={{ position: "absolute", top: 2, left: verModelos ? 14 : 2, width: 14, height: 14, borderRadius: 7, background: verModelos ? bgColor : "#ffffff", boxShadow: "0 1px 3px rgba(0,0,0,.2)", transition: "left .25s cubic-bezier(.2,.8,.2,1)" }} />
+                        </span>
+                    </button>
+                )}
+            </div>
             <div
                 className={`${uid}-strip`}
                 style={{ position: "relative", height: H, touchAction: "pan-y" }}
@@ -1714,17 +1732,6 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                     </span>
                 ))}
 
-                {/* botón para ver cada modelo por separado */}
-                {p.showModels && (
-                    <button
-                        type="button"
-                        onClick={() => setVerModelos((v) => !v)}
-                        aria-pressed={verModelos}
-                        style={{ position: "absolute", left: X0 - 6, top: 2, padding: "2px 8px", borderRadius: 999, border: `1px solid ${rgba(softColor, verModelos ? 0.7 : 0.35)}`, background: verModelos ? rgba(softColor, 0.14) : rgba(bgColor, 0.7), color: verModelos ? inkColor : softColor, fontFamily: MONO, fontSize: 8.5, letterSpacing: "0.08em", textTransform: "uppercase", cursor: "pointer", zIndex: 2 }}
-                    >
-                        {verModelos ? t("✕ Modelos", "✕ Models") : t(`≋ ${doc.models.length} modelos`, `≋ ${doc.models.length} models`)}
-                    </button>
-                )}
                 {/* nombre de cada modelo al final de su línea */}
                 {modelLines.map((m, i) =>
                     m.end ? (
