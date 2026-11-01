@@ -1777,7 +1777,7 @@ export function SeccionAcierto({ v }: { v: Vista }) {
                     <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: softColor }}>
                         <span style={{ color: tempMild }}>✦</span> {t("¿Acierta la IA?", "Is the AI right?")} · {rec.station.name}
                     </div>
-                    <div style={{ fontFamily: SANS, fontWeight: 500, fontSize: 17, lineHeight: 1.3, letterSpacing: "-0.015em", marginTop: 8, color: inkColor, textWrap: "balance" as any }}>{rec.resumen}</div>
+                    <div style={{ fontFamily: SANS, fontWeight: 500, fontSize: 17, lineHeight: 1.3, letterSpacing: "-0.015em", marginTop: 8, color: inkColor, ...({ textWrap: "balance" } as any) }}>{rec.resumen}</div>
                     {rec.n > 0 && (
                         <div style={{ fontFamily: MONO, fontSize: 10, color: softColor, marginTop: 6 }}>
                             {t(`Más cerca: IA ${rec.winI} · modelos ${rec.winM} (máximas y mínimas de ${rec.rows.length} ${rec.rows.length === 1 ? "día" : "días"})`, `Closer: AI ${rec.winI} · models ${rec.winM} (highs and lows of ${rec.rows.length} ${rec.rows.length === 1 ? "day" : "days"})`)}
