@@ -1,4 +1,2 @@
-eccodes
-h5py
 numpy
 requests

@@ -1,4 +1,4 @@
-name: Lista de pueblos y contornos del mapa
+name: Lista de pueblos
 
 on:
   schedule:
@@ -20,6 +20,4 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: |
-          python scripts/pueblos.py
-          python scripts/contornos.py
+        run: python scripts/pueblos.py
