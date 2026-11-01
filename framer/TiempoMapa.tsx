@@ -7,7 +7,7 @@
  */
 import { addPropertyControls, ControlType } from "framer"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { BASE, hexRgb, MONO, mix, rgba, SANS, scale, setIdioma, t, uR, uRL, uT, useAjustesWeb, useTema, uV, uVL } from "./TiempoNucleo.tsx"
+import { BASE, hexRgb, MONO, mix, rgba, SANS, scale, setIdioma, t, uR, uRL, uT, useAjustesWeb, useTema, uV, uVL, wcol, windStops } from "./TiempoNucleo.tsx"
 
 type Indice = { res: number; lat: number[]; lon: number[]; steps: string[] }
 type Paso = { t: string; temp: (number | null)[]; rain: (number | null)[]; wind: (number | null)[]; dir: (number | null)[] }
@@ -28,12 +28,13 @@ const CIUDADES: [string, number, number][] = [
     ["Bordeaux", 44.84, -0.58], ["Toulouse", 43.6, 1.44], ["Nantes", 47.22, -1.55], ["Strasbourg", 48.57, 7.75], ["Lille", 50.63, 3.06],
     ["Palma", 39.57, 2.65], ["Las Palmas", 28.12, -15.43], ["S/C Tenerife", 28.47, -16.25], ["Ponta Delgada", 37.74, -25.67], ["Funchal", 32.65, -16.91],
 ]
-const VIENTO: [number, string][] = [
-    [0, "#5b8bd6"],
-    [15, "#2ec7c0"],
-    [30, "#ffc93c"],
-    [50, "#ff7a3c"],
-    [75, "#e0248a"],
+/** Lluvia como un radar: cian claro (poco) → azul → violeta → magenta (mucha), en mm cada 3 h */
+const LLUVIA: [number, string][] = [
+    [1, "#8fe3ff"],
+    [3, "#3fa2ff"],
+    [8, "#5b5bff"],
+    [15, "#b04dff"],
+    [30, "#ff3fbf"],
 ]
 
 const cache = new Map<string, Promise<any>>()
@@ -59,6 +60,8 @@ type Props = {
     soloTierra: boolean
     bordes: boolean
     isotermas: boolean
+    particulas: boolean
+    windColor: string
     radius: number
     baseUrl: string
 }
@@ -83,7 +86,9 @@ export default function TiempoMapa(props: Partial<Props>) {
         soloTierra = true,
         bordes = false,
         isotermas = true,
-        radius = 0,
+        particulas = true,
+        windColor = "#e0248a",
+        radius = 24,
         baseUrl = BASE,
     } = props
     const ajw = useAjustesWeb()
@@ -105,6 +110,9 @@ export default function TiempoMapa(props: Partial<Props>) {
 
     const ref = useRef<HTMLDivElement>(null)
     const canvas = useRef<HTMLCanvasElement>(null)
+    const antes = useRef<HTMLCanvasElement>(null) // copia del fotograma anterior, para el fundido entre horas
+    const aire = useRef<HTMLCanvasElement>(null) // las partículas del viento
+    const campo = useRef<{ nx: number; ny: number; u: Float32Array; v: Float32Array; s: Float32Array } | null>(null)
     const [W, setW] = useState(390)
     const [idx, setIdx] = useState<Indice | null>(null)
     const [cont, setCont] = useState<{ lines: number[][] } | null>(null)
@@ -157,9 +165,12 @@ export default function TiempoMapa(props: Partial<Props>) {
     }, [play, idx])
 
     // Proyección
-    const [lo0, la0, lo1, la1] = zona.box
+    const [lo0, la0z, lo1, la1z] = zona.box
     const kx = W / (lo1 - lo0)
-    const ky = kx / Math.cos((((la0 + la1) / 2) * Math.PI) / 180)
+    const ky = kx / Math.cos((((la0z + la1z) / 2) * Math.PI) / 180)
+    // se amplía la zona arriba y abajo para que los mandos de cristal no tapen tierra
+    const la1 = la1z + 50 / ky,
+        la0 = la0z - 86 / ky
     const H = Math.round((la1 - la0) * ky)
     const px = (lon: number) => (lon - lo0) * kx
     const py = (lat: number) => (la1 - lat) * ky
@@ -169,6 +180,19 @@ export default function TiempoMapa(props: Partial<Props>) {
         const cv = canvas.current
         if (!cv || !idx || !paso) return
         const dpr = typeof window !== "undefined" ? Math.min(2, window.devicePixelRatio || 1) : 1
+        // fundido suave: lo que había se copia encima y se desvanece
+        const pv = antes.current
+        if (pv && cv.width && cv.height) {
+            pv.width = cv.width
+            pv.height = cv.height
+            pv.getContext("2d")?.drawImage(cv, 0, 0)
+            pv.style.transition = "none"
+            pv.style.opacity = "1"
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                pv.style.transition = "opacity .45s ease"
+                pv.style.opacity = "0"
+            }))
+        }
         cv.width = Math.round(W * dpr)
         cv.height = Math.round(H * dpr)
         const ctx = cv.getContext("2d")
@@ -202,13 +226,13 @@ export default function TiempoMapa(props: Partial<Props>) {
             } else if (capa === "lluvia") {
                 const v = paso.rain[i]
                 if (v == null) continue
-                col = rainColor
-                a = v < 1 ? 0 : Math.min(0.95, 0.25 + Math.sqrt(v / 10 / 6))
+                col = scale(LLUVIA, v / 10)
+                a = v < 1 ? 0 : Math.min(0.92, 0.45 + Math.sqrt(v / 10 / 12))
             } else {
                 const v = paso.wind[i]
                 if (v == null) continue
-                col = scale(VIENTO, v)
-                a = 0.88
+                col = wcol(v, windColor)
+                a = 0.8
             }
             const [cr, cg, cb] = hexRgb(col) // vale para «#3d6bff» y para «rgb(61, 107, 255)» (como da Framer los colores)
             const q = (y * nx + x) * 4
@@ -264,6 +288,40 @@ export default function TiempoMapa(props: Partial<Props>) {
                 has[p] = 1
             }
         }
+        // Campo de viento (u, v en px/s) para las partículas: un valor por punto, con los huecos rellenos
+        {
+            const u = new Float32Array(nx * ny).fill(NaN),
+                vv = new Float32Array(nx * ny).fill(NaN),
+                sp = new Float32Array(nx * ny).fill(NaN)
+            for (let i = 0; i < idx.lat.length; i++) {
+                const x = gx(idx.lon[i] / 100),
+                    y = gy(idx.lat[i] / 100)
+                const w = paso.wind[i],
+                    d = paso.dir[i]
+                if (x < 0 || y < 0 || x >= nx || y >= ny || w == null || d == null) continue
+                const a = (d * Math.PI) / 180
+                u[y * nx + x] = -Math.sin(a) * w
+                vv[y * nx + x] = Math.cos(a) * w
+                sp[y * nx + x] = w
+            }
+            for (let pass = 0; pass < 3; pass++) {
+                const add: [number, number, number, number][] = []
+                for (let y = 0; y < ny; y++)
+                    for (let x = 0; x < nx; x++) {
+                        if (!isNaN(u[y * nx + x])) continue
+                        let n = 0, su = 0, sv = 0, ss = 0
+                        for (let dy = -1; dy <= 1; dy++)
+                            for (let dx = -1; dx <= 1; dx++) {
+                                const q = (y + dy) * nx + x + dx
+                                if (x + dx < 0 || y + dy < 0 || x + dx >= nx || y + dy >= ny || isNaN(u[q])) continue
+                                su += u[q]; sv += vv[q]; ss += sp[q]; n++
+                            }
+                        if (n) add.push([y * nx + x, su / n, sv / n, ss / n])
+                    }
+                for (const [q, a1, a2, a3] of add) (u[q] = a1), (vv[q] = a2), (sp[q] = a3)
+            }
+            campo.current = { nx, ny, u, v: vv, s: sp }
+        }
         const small = document.createElement("canvas")
         small.width = nx
         small.height = ny
@@ -290,6 +348,16 @@ export default function TiempoMapa(props: Partial<Props>) {
                 }
                 tierra.closePath()
             }
+        }
+        // La tierra levantada del mar: una base con sombra suave
+        if (tierra) {
+            ctx.save()
+            ctx.shadowColor = dark ? "rgba(0,0,0,.55)" : "rgba(40,50,70,.18)"
+            ctx.shadowBlur = 22
+            ctx.shadowOffsetY = 6
+            ctx.fillStyle = dark ? "#161b28" : "#f3eee4"
+            ctx.fill(tierra)
+            ctx.restore()
         }
         ctx.save()
         if (tierra) ctx.clip(tierra)
@@ -329,8 +397,8 @@ export default function TiempoMapa(props: Partial<Props>) {
             for (const v of sm) if (!isNaN(v)) (vmin = Math.min(vmin, v)), (vmax = Math.max(vmax, v))
             ctx.save()
             if (tierra) ctx.clip(tierra)
-            ctx.strokeStyle = rgba(ink, dark ? 0.45 : 0.38)
-            ctx.lineWidth = 0.9
+            ctx.strokeStyle = dark ? "rgba(255,255,255,.32)" : "rgba(255,255,255,.75)"
+            ctx.lineWidth = 0.8
             ctx.lineCap = "round"
             const etiquetasIso: [number, number, number][] = []
             for (let L = Math.ceil(vmin / step) * step; L <= vmax; L += step) {
@@ -377,13 +445,20 @@ export default function TiempoMapa(props: Partial<Props>) {
             for (const [x, y, L] of etiquetasIso) {
                 const txt = `${Math.round(L)}°`
                 const w = ctx.measureText(txt).width + 8
-                ctx.fillStyle = rgba(bg, 0.85)
+                ctx.fillStyle = dark ? "rgba(10,12,20,.55)" : "rgba(255,255,255,.7)"
                 ctx.beginPath()
                 ctx.roundRect?.(x - w / 2, y - 7, w, 14, 7)
                 ctx.fill()
-                ctx.fillStyle = rgba(ink, 0.8)
+                ctx.fillStyle = rgba(ink, 0.75)
                 ctx.fillText(txt, x, y + 0.5)
             }
+        }
+        // Costa: una línea de luz finita (en vez de un borde oscuro)
+        if (tierra) {
+            ctx.strokeStyle = dark ? "rgba(255,255,255,.16)" : "rgba(255,255,255,.9)"
+            ctx.lineWidth = 1
+            ctx.lineJoin = "round"
+            ctx.stroke(tierra)
         }
         // 2) contornos (apagados por defecto: control «Bordes»)
         if (bordes && cont) {
@@ -402,7 +477,7 @@ export default function TiempoMapa(props: Partial<Props>) {
             ctx.stroke()
         }
         // 3) flechas del viento
-        if (capa === "viento") {
+        if (capa === "viento" && !particulas) {
             const salto = Math.max(1, Math.round(22 / (r * kx)))
             ctx.strokeStyle = rgba(ink, 0.7)
             ctx.lineWidth = 1
@@ -427,7 +502,72 @@ export default function TiempoMapa(props: Partial<Props>) {
                 ctx.restore()
             }
         }
-    }, [idx, paso, cont, capa, zona, W, H, dark, blur, tempCold, tempMild, tempWarm, tempHot, rainColor, soloTierra, bordes, isotermas])
+    }, [idx, paso, cont, capa, zona, W, H, dark, blur, tempCold, tempMild, tempWarm, tempHot, rainColor, soloTierra, bordes, isotermas, windColor, particulas])
+
+    // Partículas del viento (como en Windy): siguen el viento de cada sitio y dejan estela.
+    // En la capa de viento van de colores (según la velocidad); en las otras, blancas y muy suaves.
+    useEffect(() => {
+        const cv = aire.current
+        if (!cv || !particulas || !idx) return
+        const ctx = cv.getContext("2d")
+        if (!ctx) return
+        const dpr = typeof window !== "undefined" ? Math.min(2, window.devicePixelRatio || 1) : 1
+        cv.width = Math.round(W * dpr)
+        cv.height = Math.round(H * dpr)
+        const quieto = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches
+        const r = idx.res
+        const N = Math.round(Math.min(1400, (W * H) / 260))
+        const ps = Array.from({ length: N }, () => ({ x: Math.random() * W, y: Math.random() * H, vida: Math.random() * 3 }))
+        const muestra = (x: number, y: number) => {
+            const c = campo.current
+            if (!c) return null
+            const fx = (x / kx) / r + 2,
+                fy = (y / ky) / r + 2 // del píxel a la rejilla (mismo origen que el dibujo)
+            const x0 = Math.floor(fx), y0 = Math.floor(fy)
+            if (x0 < 0 || y0 < 0 || x0 + 1 >= c.nx || y0 + 1 >= c.ny) return null
+            const ax = fx - x0, ay = fy - y0
+            const lerp = (arr: Float32Array) => {
+                const a = arr[y0 * c.nx + x0], b = arr[y0 * c.nx + x0 + 1], d = arr[(y0 + 1) * c.nx + x0], e = arr[(y0 + 1) * c.nx + x0 + 1]
+                return (a * (1 - ax) + b * ax) * (1 - ay) + (d * (1 - ax) + e * ax) * ay
+            }
+            const u = lerp(c.u), v = lerp(c.v), s = lerp(c.s)
+            return isNaN(u) || isNaN(v) ? null : [u, v, s]
+        }
+        const color = capa === "viento"
+        let raf = 0, t0 = performance.now(), visible = true
+        const io = typeof IntersectionObserver !== "undefined" ? new IntersectionObserver(([en]) => { visible = en.isIntersecting; if (visible && !raf) raf = requestAnimationFrame(frame) }) : null
+        io?.observe(cv)
+        const frame = (now: number) => {
+            raf = 0
+            const dt = Math.min(0.05, (now - t0) / 1000)
+            t0 = now
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+            ctx.globalCompositeOperation = "destination-out"
+            ctx.fillStyle = "rgba(0,0,0,.09)"
+            ctx.fillRect(0, 0, W, H)
+            ctx.globalCompositeOperation = dark ? "lighter" : "source-over"
+            ctx.lineCap = "round"
+            const k = Math.max(0.35, W / 900) // px por km/h y segundo
+            for (const p of ps) {
+                const m = muestra(p.x, p.y)
+                p.vida += dt
+                if (!m || p.vida > 4 || p.x < 0 || p.y < 0 || p.x > W || p.y > H) {
+                    p.x = Math.random() * W; p.y = Math.random() * H; p.vida = 0
+                    continue
+                }
+                const [u, v, s] = m
+                const nx = p.x + u * k * dt * 1.6, ny = p.y + v * k * dt * 1.6
+                const a = Math.min(1, p.vida * 2) * Math.min(1, (4 - p.vida) * 2)
+                ctx.strokeStyle = color ? rgba(dark ? wcol(s, windColor) : mix(wcol(s, windColor), "#1d1a17", 0.15), 0.85 * a) : dark ? `rgba(255,255,255,${0.35 * a})` : `rgba(255,255,255,${0.75 * a})`
+                ctx.lineWidth = color ? 1.3 : 1
+                ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(nx, ny); ctx.stroke()
+                p.x = nx; p.y = ny
+            }
+            if (!quieto && visible) raf = requestAnimationFrame(frame)
+        }
+        frame(performance.now() + 16)
+        return () => { cancelAnimationFrame(raf); io?.disconnect(); ctx.clearRect(0, 0, cv.width, cv.height) }
+    }, [particulas, idx, paso, capa, W, H, dark, windColor, zona])
 
     const valorEn = (lat: number, lon: number) => {
         if (!idx || !paso) return null
@@ -449,77 +589,105 @@ export default function TiempoMapa(props: Partial<Props>) {
     const PRINCIPALES = new Set(["Madrid", "Barcelona", "Sevilla", "Bilbao", "Lisboa", "Paris", "Lyon", "Bordeaux", "Marseille", "Valencia", "A Coruña", "Palma", "Las Palmas", "S/C Tenerife", "Ponta Delgada", "Funchal"])
     const etiquetas = useMemo(() => CIUDADES.filter(([n, la, lo]) => PRINCIPALES.has(n) && lo >= lo0 && lo <= lo1 && la >= la0 && la <= la1), [zona])
 
-    const fmtPaso = (s: string) =>
-        new Intl.DateTimeFormat(t("es-ES", "en-GB"), { timeZone: "Europe/Madrid", weekday: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(s)).replace(".", "")
-    const chip = (activo: boolean): { [k: string]: any } => ({ padding: "5px 11px", borderRadius: 999, border: `1px solid ${activo ? ink : rgba(ink, 0.15)}`, background: activo ? rgba(ink, 0.06) : "transparent", color: activo ? ink : soft, fontFamily: SANS, fontSize: 13, fontWeight: activo ? 500 : 400, cursor: "pointer" })
+    const fmtPaso = (s: string) => new Intl.DateTimeFormat(t("es-ES", "en-GB"), { timeZone: "Europe/Madrid", weekday: "short", day: "numeric" }).format(new Date(s)).replace(".", "")
+    const fmtHora = (s: string) => new Intl.DateTimeFormat(t("es-ES", "en-GB"), { timeZone: "Europe/Madrid", hour: "2-digit", minute: "2-digit" }).format(new Date(s))
+    const fmtDiaCorto = (s: string) => new Intl.DateTimeFormat(t("es-ES", "en-GB"), { timeZone: "Europe/Madrid", weekday: "narrow" }).format(new Date(s))
     const leyenda =
         capa === "temp"
             ? `linear-gradient(90deg, ${[-5, 0, 6, 12, 18, 24, 30, 36].map((v) => tcol(v)).join(",")})`
             : capa === "lluvia"
-              ? `linear-gradient(90deg, ${rgba(rainColor, 0.25)}, ${rgba(rainColor, 0.95)})`
-              : `linear-gradient(90deg, ${VIENTO.map(([, c]) => c).join(",")})`
-    const marcas = capa === "temp" ? [-5, 12, 36].map((v) => `${Math.round(uT(v))}°`) : capa === "lluvia" ? [uR(0.1), uR(3), `${uR(10)} ${uRL()} / 3 h`] : ["0", String(uV(30)), `${uV(75)} ${uVL()}`]
+              ? `linear-gradient(90deg, ${LLUVIA.map(([, c]) => c).join(",")})`
+              : `linear-gradient(90deg, ${windStops(windColor).map(([, c]) => c).join(",")})`
+    const marcas = capa === "temp" ? [-5, 12, 36].map((v) => `${Math.round(uT(v))}°`) : capa === "lluvia" ? [uR(0.1), uR(8), `${uR(30)} ${uRL()}`] : ["0", String(uV(35)), `${uV(75)} ${uVL()}`]
+
+    // cristal: los mandos flotan encima del mapa
+    const cristal = { background: dark ? "rgba(14,17,26,.55)" : "rgba(255,255,255,.62)", backdropFilter: "blur(14px) saturate(1.4)", WebkitBackdropFilter: "blur(14px) saturate(1.4)", boxShadow: `inset 0 0 0 1px ${dark ? "rgba(255,255,255,.08)" : "rgba(255,255,255,.7)"}, 0 6px 24px rgba(0,0,0,${dark ? 0.35 : 0.08})` }
+    const mar = dark ? "radial-gradient(120% 90% at 30% 15%, #121a2c 0%, #0a0f1b 60%, #070a12 100%)" : "radial-gradient(120% 90% at 30% 15%, #f1f5f7 0%, #e1e9ef 60%, #d6e0e8 100%)"
+    const puntos = `radial-gradient(${dark ? "rgba(255,255,255,.06)" : "rgba(30,50,80,.08)"} 1px, transparent 1.3px)`
+    const capas: [Capa, string][] = [
+        ["temp", t("Temperatura", "Temperature")],
+        ["lluvia", t("Lluvia", "Rain")],
+        ["viento", t("Viento", "Wind")],
+    ]
+    const ci = capas.findIndex(([id]) => id === capa)
+    const nPasos = idx?.steps.length ?? 1
+    const ahoraK = idx ? idx.steps.reduce((b, st, i) => (Math.abs(Date.parse(st) - Date.now()) < Math.abs(Date.parse(idx.steps[b]) - Date.now()) ? i : b), 0) : 0
+    const cambiosDia = idx ? idx.steps.map((st, i) => [i, st] as [number, string]).filter(([i, st]) => i > 0 && fmtPaso(st) !== fmtPaso(idx.steps[i - 1])) : []
 
     return (
-        <div ref={ref} style={{ width: "100%", background: bg, color: ink, borderRadius: radius, overflow: "hidden", fontFamily: SANS, padding: "16px 0 18px" }}>
-            <div style={{ display: "flex", gap: 8, padding: "0 20px", flexWrap: "wrap" }}>
-                {(
-                    [
-                        ["temp", t("Temperatura", "Temperature")],
-                        ["lluvia", t("Lluvia", "Rain")],
-                        ["viento", t("Viento", "Wind")],
-                    ] as [Capa, string][]
-                ).map(([id, txt]) => (
-                    <button key={id} type="button" onClick={() => setCapa(id)} style={chip(capa === id)}>
-                        {txt}
-                    </button>
-                ))}
-            </div>
-            <div style={{ height: 10 }} />
-            {err ? (
-                <div style={{ padding: 20, fontSize: 13, color: soft }}>{t("No se pudo cargar el mapa.", "Couldn't load the map.")}</div>
-            ) : (
-                <div style={{ position: "relative", width: W, height: H }}>
-                    <canvas ref={canvas} style={{ width: W, height: H, display: "block" }} />
-                    {etiquetas.map(([n, la, lo]) => {
-                        const v = valorEn(la, lo)
-                        if (v == null) return null
-                        return (
-                            <span key={n} title={n} style={{ position: "absolute", left: px(lo) - 2, top: py(la) - 2, pointerEvents: "none", display: "flex", alignItems: "center", gap: 4 }}>
-                                <span style={{ width: 4, height: 4, borderRadius: 2, background: ink }} />
-                                <span style={{ fontFamily: SANS, fontWeight: 500, fontSize: 11, color: ink, textShadow: `0 0 3px ${bg}, 0 0 3px ${bg}, 0 0 2px ${bg}` }}>{v}</span>
-                            </span>
-                        )
-                    })}
-                    {!paso && <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", fontSize: 13, color: soft }}>{t("Cargando…", "Loading…")}</div>}
-                </div>
-            )}
-            <div style={{ padding: "10px 20px 0" }}>
-                <div style={{ height: 8, borderRadius: 4, background: leyenda }} />
-                <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 10, color: soft, marginTop: 3 }}>
-                    {marcas.map((m) => (
-                        <span key={m}>{m}</span>
-                    ))}
-                </div>
-                {idx && (
-                    <>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
-                            <button type="button" onClick={() => setK((v) => Math.max(0, v - 1))} style={chip(false)} aria-label={t("Antes", "Earlier")}>
-                                ◀
+        <div ref={ref} style={{ width: "100%", color: ink, fontFamily: SANS }}>
+            <div style={{ position: "relative", width: W, height: H, borderRadius: radius, overflow: "hidden", background: mar, isolation: "isolate" }}>
+                <div style={{ position: "absolute", inset: 0, backgroundImage: puntos, backgroundSize: "14px 14px", pointerEvents: "none" }} />
+                {err ? (
+                    <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", fontSize: 13, color: soft }}>{t("No se pudo cargar el mapa.", "Couldn't load the map.")}</div>
+                ) : (
+                    <div style={{ position: "absolute", left: 0, top: 0, width: W, height: H }}>
+                        <canvas ref={canvas} style={{ position: "absolute", inset: 0, width: W, height: H, display: "block" }} />
+                        <canvas ref={antes} style={{ position: "absolute", inset: 0, width: W, height: H, display: "block", pointerEvents: "none", opacity: 0 }} />
+                        {particulas && <canvas ref={aire} style={{ position: "absolute", inset: 0, width: W, height: H, display: "block", pointerEvents: "none" }} />}
+                        {etiquetas.map(([n, la, lo]) => {
+                            const v = valorEn(la, lo)
+                            if (v == null) return null
+                            const cc = capa === "temp" ? tcol(parseFloat(v)) : capa === "viento" ? wcol(parseFloat(v), windColor) : scale(LLUVIA, parseFloat(v))
+                            return (
+                                <span key={n} title={n} style={{ position: "absolute", left: px(lo), top: py(la), transform: "translate(-6px, -50%)", pointerEvents: "none", display: "flex", alignItems: "center", gap: 4, padding: "2px 7px 2px 4px", borderRadius: 999, ...cristal, boxShadow: cristal.boxShadow.replace(/0 6px 24px[^,]*$/, "0 2px 8px rgba(0,0,0,.08)") }}>
+                                    <span style={{ width: 6, height: 6, borderRadius: 3, background: cc, boxShadow: `0 0 6px ${cc}` }} />
+                                    <span style={{ fontFamily: SANS, fontWeight: 600, fontSize: 10.5, color: ink, letterSpacing: "-0.01em" }}>{v}</span>
+                                </span>
+                            )
+                        })}
+                        {!paso && <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", fontSize: 13, color: soft }}>{t("Cargando…", "Loading…")}</div>}
+                    </div>
+                )}
+
+                {/* arriba: capas (con pastilla que se desliza) y la hora */}
+                <div style={{ position: "absolute", top: 12, left: 12, right: 12, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, pointerEvents: "none" }}>
+                    <div style={{ position: "relative", display: "flex", padding: 3, borderRadius: 999, pointerEvents: "auto", ...cristal }}>
+                        <span style={{ position: "absolute", top: 3, bottom: 3, left: `calc(3px + ${ci} * (100% - 6px) / 3)`, width: "calc((100% - 6px) / 3)", borderRadius: 999, background: dark ? "rgba(255,255,255,.14)" : "#ffffff", boxShadow: "0 1px 4px rgba(0,0,0,.1)", transition: "left .35s cubic-bezier(.2,.8,.2,1)" }} />
+                        {capas.map(([id, txt]) => (
+                            <button key={id} type="button" onClick={() => setCapa(id)} aria-pressed={capa === id} style={{ position: "relative", flex: 1, minWidth: Math.min(92, (W - 140) / 3), padding: "6px 10px", border: "none", background: "transparent", color: capa === id ? ink : soft, fontFamily: SANS, fontSize: 12, fontWeight: capa === id ? 600 : 500, cursor: "pointer", whiteSpace: "nowrap" }}>
+                                {txt}
                             </button>
-                            <button type="button" onClick={() => setPlay((v) => !v)} style={chip(play)} aria-label={play ? t("Pausa", "Pause") : t("Reproducir", "Play")}>
-                                {play ? "❚❚" : "▶"}
-                            </button>
-                            <button type="button" onClick={() => setK((v) => Math.min(idx.steps.length - 1, v + 1))} style={chip(false)} aria-label={t("Después", "Later")}>
-                                ▶▶
-                            </button>
-                            <span style={{ flex: 1, textAlign: "right", fontWeight: 500, fontSize: 15, textTransform: "capitalize" }}>{fmtPaso(idx.steps[k])}</span>
+                        ))}
+                    </div>
+                    {idx && (
+                        <div style={{ padding: "5px 11px", borderRadius: 14, textAlign: "right", ...cristal }}>
+                            <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: soft }}>{fmtPaso(idx.steps[k])}</div>
+                            <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1 }}>{fmtHora(idx.steps[k])}</div>
                         </div>
-                        <input type="range" min={0} max={idx.steps.length - 1} value={k} onChange={(e: any) => setK(Number(e.target.value))} style={{ width: "100%", marginTop: 10, accentColor: ink }} aria-label={t("Hora", "Time")} />
-                        <div style={{ fontSize: 12, color: soft, marginTop: 4 }}>{t("Media de 8 modelos cada 25 km.", "Average of 8 models every 25 km.")}</div>
-                    </>
+                    )}
+                </div>
+
+                {/* abajo: play, línea de tiempo y leyenda, en una barra de cristal */}
+                {idx && (
+                    <div style={{ position: "absolute", left: 12, right: 12, bottom: 12, padding: "10px 12px 9px", borderRadius: 18, ...cristal }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <button type="button" onClick={() => setPlay((v) => !v)} aria-label={play ? t("Pausa", "Pause") : t("Reproducir", "Play")} style={{ width: 32, height: 32, flex: "none", borderRadius: 16, border: "none", background: ink, color: bg, display: "grid", placeItems: "center", cursor: "pointer", boxShadow: "0 4px 12px rgba(0,0,0,.18)" }}>
+                                <svg width="12" height="12" viewBox="0 0 12 12">{play ? <path d="M3 2h2v8H3zM7 2h2v8H7z" fill={bg} /> : <path d="M3.5 1.8l7 4.2-7 4.2z" fill={bg} />}</svg>
+                            </button>
+                            <div style={{ position: "relative", flex: 1, height: 30 }}>
+                                {/* pista, días y «ahora» */}
+                                <div style={{ position: "absolute", left: 0, right: 0, top: 9, height: 4, borderRadius: 2, background: rgba(ink, 0.12) }} />
+                                <div style={{ position: "absolute", left: 0, top: 9, height: 4, borderRadius: 2, width: `${(k / Math.max(1, nPasos - 1)) * 100}%`, background: leyenda, transition: play ? "width .6s linear" : "width .2s" }} />
+                                {cambiosDia.map(([i, st]) => (
+                                    <span key={i} style={{ position: "absolute", left: `${(i / Math.max(1, nPasos - 1)) * 100}%`, top: 17, transform: "translateX(-50%)", fontFamily: MONO, fontSize: 8.5, color: soft, textTransform: "uppercase" }}>
+                                        {fmtDiaCorto(st)}
+                                    </span>
+                                ))}
+                                <span title={t("Ahora", "Now")} style={{ position: "absolute", left: `${(ahoraK / Math.max(1, nPasos - 1)) * 100}%`, top: 6, width: 2, height: 10, marginLeft: -1, borderRadius: 1, background: ink, opacity: 0.5 }} />
+                                <span style={{ position: "absolute", left: `${(k / Math.max(1, nPasos - 1)) * 100}%`, top: 4, width: 14, height: 14, marginLeft: -7, borderRadius: 7, background: "#fff", boxShadow: `0 0 0 2px ${ink}, 0 2px 6px rgba(0,0,0,.25)`, transition: play ? "left .6s linear" : "left .2s", pointerEvents: "none" }} />
+                                <input type="range" min={0} max={nPasos - 1} value={k} onChange={(e: any) => { setPlay(false); setK(Number(e.target.value)) }} aria-label={t("Hora", "Time")} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", margin: 0 }} />
+                            </div>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                            <span style={{ fontFamily: MONO, fontSize: 9, color: soft }}>{marcas[0]}</span>
+                            <div style={{ flex: 1, height: 5, borderRadius: 3, background: leyenda, opacity: 0.9 }} />
+                            <span style={{ fontFamily: MONO, fontSize: 9, color: soft }}>{marcas[2]}</span>
+                        </div>
+                    </div>
                 )}
             </div>
+            <div style={{ fontSize: 11, color: soft, marginTop: 8, padding: "0 4px" }}>{t("Media de 8 modelos cada 25 km · partículas: viento previsto.", "Average of 8 models every 25 km · particles: forecast wind.")}</div>
         </div>
     )
 }
@@ -533,11 +701,12 @@ addPropertyControls(TiempoMapa, {
     tempMild: { type: ControlType.Color, title: "Temp. 12°", defaultValue: "#2ec7c0" },
     tempWarm: { type: ControlType.Color, title: "Temp. 22°", defaultValue: "#ffc93c" },
     tempHot: { type: ControlType.Color, title: "Temp. 32°", defaultValue: "#ff3d3d" },
-    rainColor: { type: ControlType.Color, title: "Lluvia", defaultValue: "#3d6bff" },
     blur: { type: ControlType.Number, title: "Difuminado", min: 0, max: 3, step: 0.1, defaultValue: 1 },
     soloTierra: { type: ControlType.Boolean, title: "Solo tierra", defaultValue: true },
     bordes: { type: ControlType.Boolean, title: "Bordes", defaultValue: false },
     isotermas: { type: ControlType.Boolean, title: "Isotermas", defaultValue: true },
-    radius: { type: ControlType.Number, title: "Esquinas", min: 0, max: 40, defaultValue: 0 },
+    particulas: { type: ControlType.Boolean, title: "Partículas viento", defaultValue: true },
+    windColor: { type: ControlType.Color, title: "Color viento", defaultValue: "#e0248a" },
+    radius: { type: ControlType.Number, title: "Esquinas", min: 0, max: 40, defaultValue: 24 },
     baseUrl: { type: ControlType.String, title: "URL de datos", defaultValue: BASE },
 })
