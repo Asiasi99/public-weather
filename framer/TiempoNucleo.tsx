@@ -212,8 +212,12 @@ function dayCorr(list: { corr?: N }[]): number | null {
  * Es una explicación probable: la IA no «dice» sus motivos, pero aprende de los errores de los
  * modelos aquí, y esos errores casi siempre vienen de estas situaciones (cielo, viento, lluvia…).
  */
-type Tramo = { nombre: string; desde: number; hasta: number; c: number; razon: string }
-function explicaIA(list: Hour[], esNoche: (t: number) => boolean, fmt: (v: number) => string): { tramos: Tramo[]; acuerdo: string | null } {
+/** Nombre corto de cada modelo meteorológico */
+const NOMBRE: Record<string, string> = { ifs: "ECMWF", aifs: "ECMWF IA", gfs: "GFS (EE. UU.)", "icon-eu": "ICON (Alemania)", arpege: "ARPEGE (Francia)", arome: "AROME (Francia)", ukmo: "UKMO (R. Unido)", gem: "GEM (Canadá)" }
+const nombreModelo = (id: string | undefined, i: number) => NOMBRE[id ?? ""] ?? (id ?? `Modelo ${i + 1}`).toUpperCase()
+type ModeloSerie = { nombre: string; ts: number[]; temp: N[] }
+type Tramo = { cerca?: [string, number]; lejos?: [string, number]; nombre: string; desde: number; hasta: number; c: number; razon: string }
+function explicaIA(list: Hour[], esNoche: (t: number) => boolean, fmt: (v: number) => string, mods: ModeloSerie[] = [], fmtT: (v: number) => string = (v) => `${Math.round(v)}°`): { tramos: Tramo[]; acuerdo: string | null } {
     const m = (xs: N[]) => {
         const v = xs.filter((x): x is number => x != null)
         return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null
@@ -249,10 +253,21 @@ function explicaIA(list: Hour[], esNoche: (t: number) => boolean, fmt: (v: numbe
             else if (nub < 30) razon = t("Sol pleno: aquí calienta más de lo que dan los modelos.", "Full sun: it gets warmer here than the models say.")
             else razon = t("De día aquí suele hacer más de lo que dan los modelos.", "Days here tend to be warmer than the models say.")
         }
-        tramos.push({ nombre, desde: r[0].t, hasta: r[r.length - 1].t + HOUR, c, razon })
+        // qué modelo se parece más a la IA en esas horas y cuál se aleja más (modelo − IA, de media)
+        const difs = mods
+            .map((md) => [md.nombre, m(r.map((h) => (h.corr == null ? null : (at(md.ts, md.temp, h.t) ?? NaN) - h.temp)).map((x) => (x != null && isNaN(x) ? null : x)))] as [string, number | null])
+            .filter((d): d is [string, number] => d[1] != null)
+            .sort((a, b) => Math.abs(a[1]) - Math.abs(b[1]))
+        tramos.push({ nombre, desde: r[0].t, hasta: r[r.length - 1].t + HOUR, c, razon, cerca: difs[0], lejos: difs.length > 1 ? difs[difs.length - 1] : undefined })
     })
     const sd = m(list.map((h) => h.sd))
-    const acuerdo = sd != null && sd >= 1.5 ? t(`Los modelos no se ponen de acuerdo (±${fmt(sd).replace(/^[+−]/, "")}): la IA se fía más de los que mejor aciertan aquí.`, `The models disagree (±${fmt(sd).replace(/^[+−]/, "")}): the AI trusts the ones that do best here.`) : null
+    let acuerdo: string | null = null
+    if (sd != null && sd >= 1.5) {
+        // el más caliente y el más frío de media ese día
+        const medias = mods.map((md) => [md.nombre, m(list.map((h) => at(md.ts, md.temp, h.t)))] as [string, number | null]).filter((d): d is [string, number] => d[1] != null).sort((a, b) => b[1] - a[1])
+        const extremos = medias.length > 1 ? t(` ${medias[0][0]} da ${fmtT(medias[0][1])} de media y ${medias[medias.length - 1][0]} ${fmtT(medias[medias.length - 1][1])}.`, ` ${medias[0][0]} averages ${fmtT(medias[0][1])} and ${medias[medias.length - 1][0]} ${fmtT(medias[medias.length - 1][1])}.`) : ""
+        acuerdo = t(`Los modelos no se ponen de acuerdo (±${fmt(sd).replace(/^[+−]/, "")}).${extremos} La IA se fía más de los que mejor aciertan aquí.`, `The models disagree (±${fmt(sd).replace(/^[+−]/, "")}).${extremos} The AI trusts the ones that do best here.`)
+    }
     return { tramos, acuerdo }
 }
 const signo = (v: number) => (Math.abs(v) < 0.05 ? dec1(0) : `${v > 0 ? "+" : "−"}${dec1(Math.abs(v))}`)
@@ -1581,7 +1596,6 @@ export function SeccionGrafico({ v }: { v: Vista }) {
     const [verModelos, setVerModelos] = useState(false)
     const [iaDia, setIaDia] = useState<string | null>(null) // el día cuyo «por qué» está abierto
     // Cada modelo por separado: una línea gris fina (tramos sin hueco, un punto cada 2 h)
-    const NOMBRE: Record<string, string> = { ifs: "ECMWF", aifs: "ECMWF IA", gfs: "GFS", "icon-eu": "ICON", arpege: "ARPEGE", arome: "AROME", ukmo: "UKMO", gem: "GEM" }
     const modelLines = useMemo(() => {
         if (!verModelos) return []
         return doc.models.map((m, i) => {
@@ -1602,7 +1616,7 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                 last = pt
             })
             if (cur.length > 1) segs.push(cur)
-            return { id: m.id ?? `m${i}`, name: NOMBRE[m.id ?? ""] ?? (m.id ?? `Modelo ${i + 1}`).toUpperCase(), d: segs.map((s) => curve(s)).join(""), end: last as [number, number] | null }
+            return { id: m.id ?? `m${i}`, name: nombreModelo(m.id, i).replace(/ \(.*\)$/, ""), d: segs.map((s) => curve(s)).join(""), end: last as [number, number] | null }
         })
     }, [verModelos, doc, hours, W])
     return (
@@ -1801,7 +1815,7 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                         const top = k === 0 ? 4 : y(g.start) + 4
                         const open = iaDia === g.key
                         const fd = (x: number) => `${signo(uTd(x))}°`
-                        const ex = open ? explicaIA(g.list, (tt) => dayLight(tt) < 0.5, fd) : null
+                        const ex = open ? explicaIA(g.list, (tt) => dayLight(tt) < 0.5, fd, doc.models.map((md, i) => ({ nombre: nombreModelo(md.id, i), ts: md.times.map((x) => Date.parse(x)), temp: md.temp })), (x) => `${dec1(uT(x))}°`) : null
                         const hh = (tt: number) => new Intl.DateTimeFormat(LOC(), { hour: "2-digit", hourCycle: "h23", timeZone: tz }).format(new Date(tt))
                         return (
                             <div key={`ia${g.key}`} style={{ position: "absolute", right: CLOUD_W + 4, top, zIndex: open ? 30 : 4, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
@@ -1829,6 +1843,20 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                                                     <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 11, fontWeight: 600, color: Math.abs(r.c) < 0.3 ? softColor : r.c < 0 ? tempCold : mix(tempWarm, tempHot, 0.5) }}>{fd(r.c)}</span>
                                                 </div>
                                                 <div style={{ fontSize: 11, lineHeight: 1.35, color: softColor, marginTop: 2 }}>{r.razon}</div>
+                                                {(r.cerca || r.lejos) && (
+                                                    <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 5, fontSize: 10.5, lineHeight: 1.3 }}>
+                                                        {r.cerca && (
+                                                            <span>
+                                                                <span style={{ color: tempMild }}>●</span> {t("Más parecido a la IA:", "Closest to the AI:")} <b style={{ fontWeight: 600 }}>{r.cerca[0]}</b> <span style={{ color: softColor }}>{Math.abs(r.cerca[1]) < 0.15 ? t("(casi igual)", "(almost the same)") : t(`(${dec1(Math.abs(uTd(r.cerca[1])))}° ${r.cerca[1] > 0 ? "más" : "menos"})`, `(${dec1(Math.abs(uTd(r.cerca[1])))}° ${r.cerca[1] > 0 ? "warmer" : "colder"})`)}</span>
+                                                            </span>
+                                                        )}
+                                                        {r.lejos && Math.abs(r.lejos[1]) >= 0.5 && (
+                                                            <span>
+                                                                <span style={{ color: r.lejos[1] > 0 ? tempHot : tempCold }}>●</span> {t("El que más se aleja:", "Furthest off:")} <b style={{ fontWeight: 600 }}>{r.lejos[0]}</b> <span style={{ color: softColor }}>{t(`(da ${dec1(Math.abs(uTd(r.lejos[1])))}° ${r.lejos[1] > 0 ? "más" : "menos"})`, `(${dec1(Math.abs(uTd(r.lejos[1])))}° ${r.lejos[1] > 0 ? "warmer" : "colder"})`)}</span>
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
                                         ))}
                                         {ex.acuerdo && <div style={{ fontSize: 11, lineHeight: 1.35, color: softColor, padding: "6px 0", borderTop: `1px solid ${rgba(inkColor, 0.07)}` }}>{ex.acuerdo}</div>}
