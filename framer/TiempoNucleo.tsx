@@ -1373,7 +1373,7 @@ export function useTiempo(props: Partial<Props>) {
 
     const css = `
         @keyframes ${uid}-nudge { 0%,100% { transform: translateY(1.5px); opacity: .55 } 50% { transform: translateY(-1.5px); opacity: 1 } }
-        @keyframes ${uid}-fall { from { background-position: 0 0 } to { background-position: 0 16px } }
+        @keyframes ${uid}-fall { from { background-position: 0 0 } to { background-position: -5px 24px } }
         @keyframes ${uid}-drift { 0%,100% { transform: translateY(-3px) } 50% { transform: translateY(3px) } }
         @keyframes ${uid}-pulse { 0% { transform: scale(1); opacity: .55 } 100% { transform: scale(2.6); opacity: 0 } }
         @keyframes ${uid}-in { from { opacity: 0; transform: translateY(14px); filter: blur(8px) } to { opacity: 1; transform: none; filter: blur(0) } }
@@ -1759,13 +1759,14 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                     <circle className={`${uid}-ring`} cx={tPts[0][0]} cy={tPts[0][1]} r={6} fill="none" stroke={inkColor} strokeWidth={1} />
                 </svg>
 
-                {/* gotas que caen en las horas de lluvia */}
-                {/* lluvia: una franja al lado del viento solo en las horas en que llueve, con gotas que caen */}
+                {/* lluvia: una franja de lado a lado en las horas en que llueve, con gotas que caen (más fuerte, más intensa) */}
                 {showRain &&
                     rainRuns.map((r) => {
                         const top = y(r.a) - hourHeight / 2,
                             h = y(r.b) - y(r.a) + hourHeight
                         const col = mix(rainColor, "#3d6bff", 0.35)
+                        const gota = dark ? "#dce8ff" : mix(col, "#1d3a8a", 0.35)
+                        const borde = `linear-gradient(180deg, transparent, #000 ${Math.min(14, h / 3)}px, #000 calc(100% - ${Math.min(14, h / 3)}px), transparent)`
                         return (
                             <span
                                 key={r.a}
@@ -1773,15 +1774,15 @@ export function SeccionGrafico({ v }: { v: Vista }) {
                                 className={`${uid}-rain`}
                                 style={{
                                     position: "absolute",
-                                    left: RX,
-                                    width: RW,
+                                    left: 0,
+                                    right: 0,
                                     top,
                                     height: h,
-                                    borderRadius: RW / 2,
-                                    backgroundColor: rgba(col, 0.18 + 0.4 * r.k),
-                                    boxShadow: `0 0 10px ${rgba(col, 0.35 + 0.3 * r.k)}`,
-                                    backgroundImage: `url("data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='14' height='16'><g stroke='${dark ? "#dce8ff" : mix(col, "#1d3a8a", 0.4)}' stroke-width='1.2' stroke-linecap='round'><line x1='4' y1='1' x2='3.2' y2='5'/><line x1='10.5' y1='9' x2='9.7' y2='13'/></g></svg>`)}")`,
-                                    backgroundSize: "14px 16px",
+                                    backgroundColor: rgba(col, (dark ? 0.1 : 0.08) + 0.2 * r.k),
+                                    backgroundImage: `url("data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='46' height='24'><g stroke='${gota}' stroke-opacity='${(0.45 + 0.4 * r.k).toFixed(2)}' stroke-width='1.2' stroke-linecap='round'><line x1='5' y1='2' x2='3.8' y2='7'/><line x1='21' y1='12' x2='19.8' y2='17'/><line x1='36' y1='5' x2='34.8' y2='10'/><line x1='29' y1='19' x2='28.2' y2='22.5'/><line x1='12' y1='16' x2='11.2' y2='19.5'/></g></svg>`)}")`,
+                                    backgroundSize: "46px 24px",
+                                    WebkitMaskImage: borde,
+                                    maskImage: borde,
                                     pointerEvents: "none",
                                 }}
                             />
