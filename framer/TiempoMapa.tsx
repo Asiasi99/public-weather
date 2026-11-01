@@ -633,7 +633,7 @@ export default function TiempoMapa(props: Partial<Props>) {
     const cambiosDia = idx ? idx.steps.map((st, i) => [i, st] as [number, string]).filter(([i, st]) => i > 0 && fmtPaso(st) !== fmtPaso(idx.steps[i - 1])) : []
 
     return (
-        <div ref={ref} style={{ width: "100%", color: ink, fontFamily: SANS }}>
+        <div ref={ref} data-tiempo="mapa" style={{ width: "100%", color: ink, fontFamily: SANS, scrollMarginTop: 16 }}>
             <div style={{ position: "relative", width: W, height: H, borderRadius: radius, overflow: "hidden", background: mar, isolation: "isolate" }}>
                 <div style={{ position: "absolute", inset: 0, backgroundImage: puntos, backgroundSize: "14px 14px", pointerEvents: "none" }} />
                 {err ? (
