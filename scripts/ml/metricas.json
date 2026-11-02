@@ -1,108 +1,108 @@
 {
- "examen_desde": "2026-04-12",
- "filas_entreno": 1370070,
- "filas_examen": 342643,
+ "examen_desde": "2026-04-16",
+ "filas_entreno": 1375131,
+ "filas_examen": 343980,
  "mae_ia": 1.28,
  "mae_media": 1.61,
  "mejora_pct": 20.6,
- "rango_10_90_acierta_pct": 77.5,
+ "rango_10_90_acierta_pct": 77.3,
  "por_antelacion": {
   "1": {
    "mae_ia": 1.01,
    "mae_media": 1.42,
-   "n": 48949
+   "n": 49140
   },
   "2": {
    "mae_ia": 1.05,
    "mae_media": 1.43,
-   "n": 48949
+   "n": 49140
   },
   "3": {
-   "mae_ia": 1.12,
+   "mae_ia": 1.11,
    "mae_media": 1.49,
-   "n": 48949
+   "n": 49140
   },
   "4": {
-   "mae_ia": 1.22,
+   "mae_ia": 1.21,
    "mae_media": 1.52,
-   "n": 48949
+   "n": 49140
   },
   "5": {
    "mae_ia": 1.35,
    "mae_media": 1.64,
-   "n": 48949
+   "n": 49140
   },
   "6": {
    "mae_ia": 1.52,
    "mae_media": 1.8,
-   "n": 48949
+   "n": 49140
   },
   "7": {
-   "mae_ia": 1.69,
+   "mae_ia": 1.71,
    "mae_media": 1.97,
-   "n": 48949
+   "n": 49140
   }
  },
  "por_ciudad": {
   "a-coruna": {
-   "mae_ia": 1.27,
+   "mae_ia": 1.26,
    "mae_media": 1.3
   },
   "albacete": {
-   "mae_ia": 1.21,
-   "mae_media": 1.34
+   "mae_ia": 1.22,
+   "mae_media": 1.36
   },
   "alicante": {
    "mae_ia": 1.16,
-   "mae_media": 1.28
+   "mae_media": 1.27
   },
   "almeria": {
-   "mae_ia": 1.45,
-   "mae_media": 1.8
+   "mae_ia": 1.41,
+   "mae_media": 1.75
   },
   "badajoz": {
-   "mae_ia": 1.49,
-   "mae_media": 1.34
+   "mae_ia": 1.47,
+   "mae_media": 1.39
   },
   "barcelona": {
    "mae_ia": 1.03,
-   "mae_media": 1.08
+   "mae_media": 1.09
   },
   "bilbao": {
-   "mae_ia": 1.4,
+   "mae_ia": 1.41,
    "mae_media": 1.54
   },
   "burgos": {
    "mae_ia": 1.44,
-   "mae_media": 2.01
+   "mae_media": 1.99
   },
   "cadiz": {
-   "mae_ia": 1.24,
-   "mae_media": 2.07
+   "mae_ia": 1.3,
+   "mae_media": 2.12
   },
   "castellon": {
-   "mae_ia": 1.91,
-   "mae_media": 1.57
+   "mae_ia": 1.98,
+   "mae_media": 1.46
   },
   "cordoba": {
-   "mae_ia": 1.33,
-   "mae_media": 1.63
+   "mae_ia": 1.36,
+   "mae_media": 1.69
   },
   "girona": {
-   "mae_ia": 1.58,
-   "mae_media": 2.96
+   "mae_ia": 1.55,
+   "mae_media": 3.09
   },
   "granada": {
-   "mae_ia": 1.3,
-   "mae_media": 1.72
+   "mae_ia": 1.33,
+   "mae_media": 1.77
   },
   "guadalajara": {
-   "mae_ia": 1.29,
+   "mae_ia": 1.3,
    "mae_media": 1.44
   },
   "huesca": {
-   "mae_ia": 2.01,
-   "mae_media": 1.74
+   "mae_ia": 1.73,
+   "mae_media": 1.45
   },
   "las-palmas": {
    "mae_ia": 0.88,
@@ -110,35 +110,35 @@
   },
   "leon": {
    "mae_ia": 1.66,
-   "mae_media": 1.98
+   "mae_media": 1.86
   },
   "lleida": {
-   "mae_ia": 1.25,
-   "mae_media": 1.87
+   "mae_ia": 1.27,
+   "mae_media": 1.84
   },
   "logrono": {
-   "mae_ia": 1.39,
-   "mae_media": 1.42
+   "mae_ia": 1.41,
+   "mae_media": 1.44
   },
   "madrid": {
    "mae_ia": 1.26,
-   "mae_media": 1.41
+   "mae_media": 1.42
   },
   "malaga": {
-   "mae_ia": 1.45,
-   "mae_media": 1.89
+   "mae_ia": 1.47,
+   "mae_media": 1.9
   },
   "melilla": {
-   "mae_ia": 0.96,
-   "mae_media": 1.03
+   "mae_ia": 0.97,
+   "mae_media": 1.05
   },
   "murcia": {
-   "mae_ia": 1.09,
-   "mae_media": 1.05
+   "mae_ia": 0.99,
+   "mae_media": 1.0
   },
   "palma": {
    "mae_ia": 1.28,
-   "mae_media": 1.43
+   "mae_media": 1.46
   },
   "pamplona": {
    "mae_ia": 1.38,
@@ -149,20 +149,20 @@
    "mae_media": 1.46
   },
   "salamanca": {
-   "mae_ia": 1.42,
-   "mae_media": 1.94
+   "mae_ia": 1.45,
+   "mae_media": 1.99
   },
   "san-sebastian": {
-   "mae_ia": 1.25,
+   "mae_ia": 1.26,
    "mae_media": 1.49
   },
   "santa-cruz": {
    "mae_ia": 1.32,
-   "mae_media": 3.36
+   "mae_media": 3.34
   },
   "santander": {
-   "mae_ia": 1.1,
-   "mae_media": 1.12
+   "mae_ia": 1.08,
+   "mae_media": 1.1
   },
   "sevilla": {
    "mae_ia": 1.18,
@@ -173,23 +173,23 @@
    "mae_media": 1.2
   },
   "valencia": {
-   "mae_ia": 0.99,
+   "mae_ia": 0.98,
    "mae_media": 1.06
   },
   "valladolid": {
-   "mae_ia": 1.26,
-   "mae_media": 1.94
+   "mae_ia": 1.28,
+   "mae_media": 1.92
   },
   "vitoria": {
-   "mae_ia": 1.62,
-   "mae_media": 1.69
+   "mae_ia": 1.63,
+   "mae_media": 1.71
   },
   "zaragoza": {
    "mae_ia": 1.15,
-   "mae_media": 1.26
+   "mae_media": 1.25
   }
  },
  "dias_ia": 7,
  "usar": true,
- "entrenado": "2026-10-23T02:48Z"
+ "entrenado": "2026-11-02T08:02Z"
 }
