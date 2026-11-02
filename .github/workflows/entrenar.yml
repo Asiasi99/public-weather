@@ -65,8 +65,8 @@ jobs:
       - name: Guardar el modelo nuevo
         if: hashFiles('scripts/ml/datos/DONE') != ''
         run: |
-          git config user.name "ia-bot"
-          git config user.email "ia-bot@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add scripts/ml/modelo.joblib scripts/ml/metricas.json
           git commit -m "IA reentrenada" || exit 0
           git pull --rebase
