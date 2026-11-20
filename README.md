@@ -1,5 +1,9 @@
 # Tiempo · datos (public-weather)
 
+> **Retirado (noviembre de 2026).** La app (Airoo) ya no usa nada de esto: hace la media de los 8 modelos en tu punto
+> exacto y el resto lo preparan las funciones de Supabase del repositorio `airoo`. Las tareas programadas se han
+> quitado para que no sigan pidiendo datos a Open-Meteo ni escribiendo en Supabase; el código se queda como recuerdo.
+
 El sistema que prepara los datos de la app del tiempo: pide a Open-Meteo los 8 modelos meteorológicos en las
 52 capitales (y en las estaciones de los aeropuertos, para medir su acierto), añade lo medido por AEMET y la
 corrección de una IA, y lo publica como JSON en Supabase. Los pueblos los pide la propia app a Open-Meteo en su
