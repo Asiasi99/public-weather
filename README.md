@@ -1,8 +1,11 @@
-# Tiempo · datos (public-weather) — retirado
+# Airoo · web
 
-Aquí estaba el sistema antiguo que preparaba los datos de la app del tiempo: los 8 modelos de Open-Meteo en 52
-capitales, lo medido por AEMET y una IA que corregía la temperatura y la lluvia, publicado como JSON en Supabase.
+Las páginas públicas de Airoo (las que piden las tiendas): soporte (`index.html`), política de privacidad
+(`privacidad.html`, `privacy.html`, `pribatutasuna.html`) y condiciones de uso (`condiciones.html`, `terms.html`,
+`baldintzak.html`). Se publican con GitHub Pages (Settings → Pages → `main` / `(root)`).
 
-Se retiró en noviembre de 2026: la app (Airoo) hace la media de los 8 modelos en tu punto exacto y lo demás lo preparan
-las funciones de Supabase del repositorio `airoo`. Las tareas programadas y el código se han quitado; si alguna vez hace
-falta, sigue en el historial de git.
+No se editan a mano: salen de `movil/src/legal.ts` del repositorio `airoo`, que es lo mismo que se lee dentro de la
+app. Para rehacerlas: `cd movil && node scripts/legal-web.mjs <esta carpeta>`.
+
+(Antes aquí estaba el sistema antiguo de datos del tiempo, con la IA; se retiró en noviembre de 2026 y sigue en el
+historial de git.)
